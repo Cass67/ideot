@@ -24,6 +24,8 @@ cargo run
 - Type normally: insert text.
 - `Ctrl-S`: save current file.
 - `Ctrl-P`: open file search.
+- `F1`: toggle help overlay.
+- `Ctrl-G`: open git commit browser.
 - `Ctrl-M`: mark current file.
 - `Ctrl-1`..`Ctrl-9`: jump to mark.
 - `Ctrl-Q`: quit.

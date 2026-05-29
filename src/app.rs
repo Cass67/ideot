@@ -35,6 +35,7 @@ pub struct App {
     expanded_dirs: BTreeSet<String>,
     explorer_scroll: usize,
     editor_scroll: usize,
+    help_open: bool,
 }
 
 impl App {
@@ -56,6 +57,7 @@ impl App {
             expanded_dirs: BTreeSet::new(),
             explorer_scroll: 0,
             editor_scroll: 0,
+            help_open: false,
         }
     }
 
@@ -282,6 +284,14 @@ impl App {
 
     pub fn search_open(&self) -> bool {
         self.search_open
+    }
+
+    pub fn help_open(&self) -> bool {
+        self.help_open
+    }
+
+    pub fn toggle_help(&mut self) {
+        self.help_open = !self.help_open;
     }
 
     pub fn search_query(&self) -> &str {

@@ -184,6 +184,18 @@ fn toggling_selected_directory_expands_children_and_files_open() {
 }
 
 #[test]
+fn help_overlay_toggles_without_question_mark_binding() {
+    let dir = tempdir().unwrap();
+    let mut app = App::new(dir.path().to_path_buf());
+
+    assert!(!app.help_open());
+    app.toggle_help();
+    assert!(app.help_open());
+    app.toggle_help();
+    assert!(!app.help_open());
+}
+
+#[test]
 fn editor_cursor_maps_to_screen_position_when_visible() {
     let dir = tempdir().unwrap();
     std::fs::write(dir.path().join("main.rs"), "abc\ndef").unwrap();

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use crossterm::{
+    cursor::SetCursorStyle,
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
         MouseEventKind,
@@ -18,7 +19,12 @@ fn main() -> Result<()> {
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        SetCursorStyle::SteadyBar
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -28,7 +34,8 @@ fn main() -> Result<()> {
     execute!(
         terminal.backend_mut(),
         DisableMouseCapture,
-        LeaveAlternateScreen
+        LeaveAlternateScreen,
+        SetCursorStyle::DefaultUserShape
     )?;
     terminal.show_cursor()?;
     result
@@ -50,6 +57,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     let _ = app.save_current();
                 }
                 (KeyModifiers::CONTROL, KeyCode::Char('p')) => app.toggle_search(),
+                (_, KeyCode::F(1)) => app.toggle_help(),
                 (KeyModifiers::CONTROL, KeyCode::Char('m')) => {
                     let _ = app.mark_current_file();
                 }

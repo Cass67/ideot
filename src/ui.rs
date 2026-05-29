@@ -9,7 +9,7 @@ use ratatui::{
 pub fn render(frame: &mut Frame, app: &App) {
     let root = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([Constraint::Min(1), Constraint::Length(2)])
         .split(frame.area());
     let panes = Layout::default()
         .direction(Direction::Horizontal)
@@ -71,8 +71,42 @@ pub fn render(frame: &mut Frame, app: &App) {
         );
     }
 
+    if app.help_open() {
+        render_help_overlay(frame);
+    }
+
+    let footer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(root[1]);
+    let shortcuts = "Ctrl-P Search · Enter/Space Open/Expand · Ctrl-S Save · Ctrl-G Git · F1 Help · Ctrl-Q Quit";
+    frame.render_widget(Paragraph::new(shortcuts), footer[0]);
     let status = app.current_relative().unwrap_or("no file");
-    frame.render_widget(Paragraph::new(status.to_string()), root[1]);
+    frame.render_widget(Paragraph::new(status.to_string()), footer[1]);
+}
+
+fn render_help_overlay(frame: &mut Frame) {
+    let area = centered_rect(70, 55, frame.area());
+    let help = vec![
+        Line::from("Keyboard"),
+        Line::from("  Ctrl-P       Search files"),
+        Line::from("  Enter/Space  Open file or expand/collapse folder"),
+        Line::from("  Ctrl-S       Save current file"),
+        Line::from("  Ctrl-M       Mark current file"),
+        Line::from("  Ctrl-1..9    Jump to mark"),
+        Line::from("  Ctrl-G       Git commit browser"),
+        Line::from("  F1           Toggle this help"),
+        Line::from("  Ctrl-Q       Quit"),
+        Line::from(""),
+        Line::from("Mouse"),
+        Line::from("  Click tree row     Open file or toggle folder"),
+        Line::from("  Click editor pane  Move cursor"),
+        Line::from("  Wheel              Scroll hovered pane"),
+    ];
+    frame.render_widget(
+        Paragraph::new(help).block(Block::default().title("help").borders(Borders::ALL)),
+        area,
+    );
 }
 
 pub fn editor_cursor_screen_position(app: &App, editor_area: Rect) -> Option<(u16, u16)> {

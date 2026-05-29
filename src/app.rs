@@ -7,7 +7,15 @@ use crate::lsp::{DocumentEvent, DocumentEventSink, NullDocumentEventSink};
 use crate::marks::SessionMarks;
 use crate::search::{RecentFiles, SearchIndex};
 use anyhow::{Context, Result};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplorerEntry {
+    pub label: String,
+    pub relative: Option<String>,
+    pub is_dir: bool,
+}
 
 #[derive(Debug)]
 pub struct App {
@@ -24,6 +32,8 @@ pub struct App {
     selected_file: usize,
     search_query: String,
     search_open: bool,
+    explorer_scroll: usize,
+    editor_scroll: usize,
 }
 
 impl App {
@@ -42,6 +52,8 @@ impl App {
             selected_file: 0,
             search_query: String::new(),
             search_open: false,
+            explorer_scroll: 0,
+            editor_scroll: 0,
         }
     }
 
@@ -61,6 +73,7 @@ impl App {
         self.recent.record(relative);
         self.search_open = false;
         self.search_query.clear();
+        self.editor_scroll = 0;
         self.lsp_sink.send(DocumentEvent::Opened { path, text });
         Ok(())
     }
@@ -98,8 +111,31 @@ impl App {
         self.search_index.query(query, &self.recent)
     }
 
+    pub fn explorer_entries(&self) -> Vec<ExplorerEntry> {
+        let Some(index) = &self.index else { return Vec::new(); };
+        let mut dirs = BTreeSet::new();
+        let mut files = Vec::new();
+        for file in index.files() {
+            if let Some((dir, _rest)) = file.relative.split_once('/') {
+                dirs.insert(dir.to_string());
+            } else {
+                files.push(file.relative.clone());
+            }
+        }
+        let mut entries: Vec<ExplorerEntry> = dirs
+            .into_iter()
+            .map(|dir| ExplorerEntry { label: format!("▸ {dir}"), relative: None, is_dir: true })
+            .collect();
+        entries.extend(files.into_iter().map(|file| ExplorerEntry { label: format!("  {file}"), relative: Some(file), is_dir: false }));
+        entries
+    }
+
     pub fn current_relative(&self) -> Option<&str> {
         self.current_relative.as_deref()
+    }
+
+    pub fn language_hint(&self) -> Option<&str> {
+        self.current_relative.as_ref()?.rsplit('.').next()
     }
 
     pub fn editor(&self) -> Option<&Editor> {
@@ -170,5 +206,29 @@ impl App {
             self.open_relative(&relative)?;
         }
         Ok(())
+    }
+
+    pub fn explorer_scroll(&self) -> usize {
+        self.explorer_scroll
+    }
+
+    pub fn editor_scroll(&self) -> usize {
+        self.editor_scroll
+    }
+
+    pub fn scroll_explorer_down(&mut self) {
+        self.explorer_scroll += 1;
+    }
+
+    pub fn scroll_explorer_up(&mut self) {
+        self.explorer_scroll = self.explorer_scroll.saturating_sub(1);
+    }
+
+    pub fn scroll_editor_down(&mut self) {
+        self.editor_scroll += 1;
+    }
+
+    pub fn scroll_editor_up(&mut self) {
+        self.editor_scroll = self.editor_scroll.saturating_sub(1);
     }
 }

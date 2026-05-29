@@ -297,6 +297,7 @@ dependencies = [
  "nucleo-matcher",
  "ratatui",
  "serde",
+ "streaming-iterator",
  "tempfile",
  "tree-sitter",
  "tree-sitter-go",

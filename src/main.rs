@@ -1,6 +1,6 @@
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -15,14 +15,14 @@ fn main() -> Result<()> {
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let result = run(&mut terminal, &mut app);
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), DisableMouseCapture, LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     result
 }
@@ -36,8 +36,8 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
         if !event::poll(Duration::from_millis(100))? {
             continue;
         }
-        if let Event::Key(key) = event::read()? {
-            match (key.modifiers, key.code) {
+        match event::read()? {
+            Event::Key(key) => match (key.modifiers, key.code) {
                 (KeyModifiers::CONTROL, KeyCode::Char('q')) => app.should_quit = true,
                 (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
                     let _ = app.save_current();
@@ -60,7 +60,15 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (_, KeyCode::Char(ch)) if app.search_open() => app.push_search_char(ch),
                 (_, KeyCode::Char(ch)) => app.insert_char(ch),
                 _ => {}
-            }
+            },
+            Event::Mouse(mouse) => match mouse.kind {
+                MouseEventKind::ScrollDown if mouse.column < terminal.size()?.width / 3 => app.scroll_explorer_down(),
+                MouseEventKind::ScrollUp if mouse.column < terminal.size()?.width / 3 => app.scroll_explorer_up(),
+                MouseEventKind::ScrollDown => app.scroll_editor_down(),
+                MouseEventKind::ScrollUp => app.scroll_editor_up(),
+                _ => {}
+            },
+            _ => {}
         }
     }
     Ok(())

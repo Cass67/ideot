@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::highlight::{Highlighter, SimpleTreeSitterHighlighter};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
@@ -15,23 +16,33 @@ pub fn render(frame: &mut Frame, app: &App) {
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
         .split(root[0]);
 
-    let files: Vec<ListItem> = app
-        .search(if app.search_open() { app.search_query() } else { "" })
-        .into_iter()
-        .enumerate()
-        .take(200)
-        .map(|(index, file)| {
-            let prefix = if index == app.selected_file() { "> " } else { "  " };
-            ListItem::new(format!("{prefix}{}", file.relative))
-        })
-        .collect();
+    let files: Vec<ListItem> = if app.search_open() {
+        app.search(app.search_query())
+            .into_iter()
+            .enumerate()
+            .skip(app.explorer_scroll())
+            .take(200)
+            .map(|(index, file)| {
+                let prefix = if index == app.selected_file() { "> " } else { "  " };
+                ListItem::new(format!("{prefix}{}", file.relative))
+            })
+            .collect()
+    } else {
+        app.explorer_entries()
+            .into_iter()
+            .enumerate()
+            .skip(app.explorer_scroll())
+            .take(200)
+            .map(|(index, entry)| {
+                let prefix = if index == app.selected_file() { "> " } else { "  " };
+                ListItem::new(format!("{prefix}{}", entry.label))
+            })
+            .collect()
+    };
     frame.render_widget(List::new(files).block(Block::default().title("files").borders(Borders::ALL)), panes[0]);
 
-    let editor_text = app
-        .editor()
-        .map(|editor| editor.buffer().text())
-        .unwrap_or_else(|| "Open a file with Ctrl-P or select from explorer".to_string());
-    frame.render_widget(Paragraph::new(editor_text).block(Block::default().title("editor").borders(Borders::ALL)), panes[1]);
+    let editor_lines = highlighted_editor_lines(app);
+    frame.render_widget(Paragraph::new(editor_lines).block(Block::default().title("editor").borders(Borders::ALL)), panes[1]);
 
     if app.search_open() {
         let area = centered_rect(60, 20, frame.area());
@@ -41,6 +52,43 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let status = app.current_relative().unwrap_or("no file");
     frame.render_widget(Paragraph::new(status.to_string()), root[1]);
+}
+
+fn highlighted_editor_lines(app: &App) -> Vec<Line<'static>> {
+    let Some(editor) = app.editor() else {
+        return vec![Line::from("Open a file with Ctrl-P or select from explorer")];
+    };
+    let mut highlighter = SimpleTreeSitterHighlighter::default();
+    editor
+        .buffer()
+        .text()
+        .lines()
+        .skip(app.editor_scroll())
+        .map(|line| highlighted_line(&mut highlighter, app.language_hint(), line))
+        .collect()
+}
+
+fn highlighted_line(highlighter: &mut dyn Highlighter, language_hint: Option<&str>, line: &str) -> Line<'static> {
+    let spans = highlighter.highlight_line(language_hint, line);
+    if spans.is_empty() {
+        return Line::from(line.to_string());
+    }
+
+    let mut rendered = Vec::new();
+    let mut cursor = 0;
+    for span in spans {
+        if span.start > cursor {
+            rendered.push(Span::raw(line[cursor..span.start].to_string()));
+        }
+        if span.end <= line.len() && span.start < span.end {
+            rendered.push(Span::styled(line[span.start..span.end].to_string(), span.style));
+            cursor = span.end;
+        }
+    }
+    if cursor < line.len() {
+        rendered.push(Span::raw(line[cursor..].to_string()));
+    }
+    Line::from(rendered)
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {

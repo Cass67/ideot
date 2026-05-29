@@ -1,4 +1,4 @@
-use ideot::app::App;
+use ideot::app::{App, FocusPane};
 use ideot::highlight::{Highlighter, SimpleTreeSitterHighlighter};
 use ideot::ui;
 use ratatui::{layout::Rect, style::Color};
@@ -230,6 +230,18 @@ fn mouse_activation_opens_tree_files_and_places_editor_cursor() {
     app.place_editor_cursor(1, 2);
     assert_eq!(app.editor().unwrap().cursor().line, 1);
     assert_eq!(app.editor().unwrap().cursor().column, 2);
+}
+
+#[test]
+fn tab_toggles_focus_between_file_panel_and_editor_panel() {
+    let dir = tempdir().unwrap();
+    let mut app = App::new(dir.path().to_path_buf());
+
+    assert_eq!(app.focus_pane(), FocusPane::Explorer);
+    app.toggle_focus_pane();
+    assert_eq!(app.focus_pane(), FocusPane::Editor);
+    app.toggle_focus_pane();
+    assert_eq!(app.focus_pane(), FocusPane::Explorer);
 }
 
 #[test]

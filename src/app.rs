@@ -7,7 +7,7 @@ use crate::git::{self, DiffRow, GitCommit};
 use crate::lsp::{DocumentEvent, DocumentEventSink, NullDocumentEventSink};
 use crate::marks::SessionMarks;
 use crate::search::{RecentFiles, SearchIndex};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -16,6 +16,24 @@ pub struct ExplorerEntry {
     pub label: String,
     pub relative: Option<String>,
     pub is_dir: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilePrompt {
+    New,
+    Delete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusPane {
+    Explorer,
+    Editor,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FilePromptState {
+    pub kind: Option<FilePrompt>,
+    pub input: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +91,8 @@ pub struct App {
     explorer_scroll: usize,
     editor_scroll: usize,
     help_open: bool,
+    file_prompt: FilePromptState,
+    focus_pane: FocusPane,
     git: GitBrowserState,
 }
 
@@ -96,6 +116,8 @@ impl App {
             explorer_scroll: 0,
             editor_scroll: 0,
             help_open: false,
+            file_prompt: FilePromptState::default(),
+            focus_pane: FocusPane::Explorer,
             git: GitBrowserState::default(),
         }
     }
@@ -524,6 +546,101 @@ impl App {
             Some(GitView::Commits) => None,
             None => None,
         };
+    }
+
+    pub fn focus_pane(&self) -> FocusPane {
+        self.focus_pane
+    }
+
+    pub fn toggle_focus_pane(&mut self) {
+        self.focus_pane = match self.focus_pane {
+            FocusPane::Explorer => FocusPane::Editor,
+            FocusPane::Editor => FocusPane::Explorer,
+        };
+    }
+
+    pub fn file_prompt(&self) -> Option<FilePrompt> {
+        self.file_prompt.kind
+    }
+
+    pub fn file_prompt_input(&self) -> &str {
+        &self.file_prompt.input
+    }
+
+    pub fn start_new_file_prompt(&mut self) {
+        self.file_prompt.kind = Some(FilePrompt::New);
+        self.file_prompt.input.clear();
+    }
+
+    pub fn start_delete_file_prompt(&mut self) {
+        if self.current_relative.is_some() {
+            self.file_prompt.kind = Some(FilePrompt::Delete);
+            self.file_prompt.input.clear();
+        }
+    }
+
+    pub fn cancel_file_prompt(&mut self) {
+        self.file_prompt.kind = None;
+        self.file_prompt.input.clear();
+    }
+
+    pub fn push_file_prompt_char(&mut self, ch: char) {
+        if self.file_prompt.kind == Some(FilePrompt::New) {
+            self.file_prompt.input.push(ch);
+        }
+    }
+
+    pub fn pop_file_prompt_char(&mut self) {
+        self.file_prompt.input.pop();
+    }
+
+    pub fn submit_file_prompt(&mut self) -> Result<()> {
+        match self.file_prompt.kind {
+            Some(FilePrompt::New) => self.create_prompt_file(),
+            Some(FilePrompt::Delete) => self.confirm_delete_current_file(),
+            None => Ok(()),
+        }
+    }
+
+    fn create_prompt_file(&mut self) -> Result<()> {
+        let name = self.file_prompt.input.trim().trim_start_matches('/');
+        if name.is_empty() || name.contains("..") {
+            bail!("invalid file name");
+        }
+        let base_dir = self
+            .current_relative
+            .as_deref()
+            .and_then(|path| path.rsplit_once('/').map(|(dir, _)| dir.to_string()))
+            .unwrap_or_default();
+        let relative = if base_dir.is_empty() {
+            name.to_string()
+        } else {
+            format!("{base_dir}/{name}")
+        };
+        let absolute = self.root.join(&relative);
+        if let Some(parent) = absolute.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if !absolute.exists() {
+            std::fs::write(&absolute, "")?;
+        }
+        self.rebuild_index()?;
+        self.open_relative(&relative)?;
+        self.cancel_file_prompt();
+        Ok(())
+    }
+
+    pub fn confirm_delete_current_file(&mut self) -> Result<()> {
+        let Some(relative) = self.current_relative.clone() else {
+            return Ok(());
+        };
+        std::fs::remove_file(self.root.join(&relative))?;
+        self.editor = None;
+        self.current_relative = None;
+        self.rebuild_index()?;
+        self.cancel_file_prompt();
+        self.status = format!("deleted {relative}");
+        Ok(())
     }
 
     pub fn search_query(&self) -> &str {

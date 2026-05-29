@@ -8,7 +8,10 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ideot::{app::App, ui};
+use ideot::{
+    app::{App, FocusPane},
+    ui,
+};
 use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 use std::{io, time::Duration};
 
@@ -56,6 +59,8 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
                     let _ = app.save_current();
                 }
+                (KeyModifiers::CONTROL, KeyCode::Char('n')) => app.start_new_file_prompt(),
+                (KeyModifiers::CONTROL, KeyCode::Char('d')) => app.start_delete_file_prompt(),
                 (KeyModifiers::CONTROL, KeyCode::Char('p')) => app.toggle_search(),
                 (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
                     let _ = app.open_git_browser();
@@ -72,6 +77,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (_, KeyCode::Tab) if app.git_view() == Some(ideot::app::GitView::Diff) => {
                     app.toggle_git_diff_layout()
                 }
+                (_, KeyCode::Tab) if app.git_view().is_none() => app.toggle_focus_pane(),
                 (_, KeyCode::PageDown) if app.git_view() == Some(ideot::app::GitView::Diff) => {
                     app.page_git_diff_down(terminal.size()?.height.saturating_sub(4) as usize)
                 }
@@ -83,10 +89,33 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (_, KeyCode::Enter) if app.git_view().is_some() => {
                     let _ = app.activate_git_selection();
                 }
-                (_, KeyCode::PageDown) if terminal.size()?.width > 0 => {
+                (_, KeyCode::Esc) if app.file_prompt().is_some() => app.cancel_file_prompt(),
+                (_, KeyCode::Enter) if app.file_prompt().is_some() => {
+                    let _ = app.submit_file_prompt();
+                }
+                (_, KeyCode::Char('y'))
+                    if app.file_prompt() == Some(ideot::app::FilePrompt::Delete) =>
+                {
+                    let _ = app.confirm_delete_current_file();
+                }
+                (_, KeyCode::Backspace) if app.file_prompt().is_some() => {
+                    app.pop_file_prompt_char()
+                }
+                (_, KeyCode::Char(ch))
+                    if app.file_prompt() == Some(ideot::app::FilePrompt::New) =>
+                {
+                    app.push_file_prompt_char(ch)
+                }
+                (_, KeyCode::PageDown) if app.focus_pane() == FocusPane::Explorer => {
+                    app.page_explorer_down(terminal.size()?.height.saturating_sub(4) as usize)
+                }
+                (_, KeyCode::PageUp) if app.focus_pane() == FocusPane::Explorer => {
+                    app.page_explorer_up(terminal.size()?.height.saturating_sub(4) as usize)
+                }
+                (_, KeyCode::PageDown) => {
                     app.page_editor_down(terminal.size()?.height.saturating_sub(4) as usize)
                 }
-                (_, KeyCode::PageUp) if terminal.size()?.width > 0 => {
+                (_, KeyCode::PageUp) => {
                     app.page_editor_up(terminal.size()?.height.saturating_sub(4) as usize)
                 }
                 (_, KeyCode::Down) => app.move_selection_down(),

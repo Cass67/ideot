@@ -1,4 +1,4 @@
-use crate::app::{App, GitDiffLayout, GitView};
+use crate::app::{App, FocusPane, GitDiffLayout, GitView};
 use crate::git::DiffKind;
 use crate::highlight::{Highlighter, SimpleTreeSitterHighlighter};
 use ratatui::{
@@ -48,15 +48,35 @@ pub fn render(frame: &mut Frame, app: &App) {
             })
             .collect()
     };
+    let file_border = if app.focus_pane() == FocusPane::Explorer {
+        Color::Blue
+    } else {
+        Color::White
+    };
     frame.render_widget(
-        List::new(files).block(Block::default().title("files").borders(Borders::ALL)),
+        List::new(files).block(
+            Block::default()
+                .title("files")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(file_border)),
+        ),
         panes[0],
     );
 
     let editor_lines =
         highlighted_editor_lines_for_height(app, panes[1].height.saturating_sub(2) as usize);
+    let editor_border = if app.focus_pane() == FocusPane::Editor {
+        Color::Blue
+    } else {
+        Color::White
+    };
     frame.render_widget(
-        Paragraph::new(editor_lines).block(Block::default().title("editor").borders(Borders::ALL)),
+        Paragraph::new(editor_lines).block(
+            Block::default()
+                .title("editor")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(editor_border)),
+        ),
         panes[1],
     );
     if let Some((x, y)) = editor_cursor_screen_position(app, panes[1]) {
@@ -71,6 +91,10 @@ pub fn render(frame: &mut Frame, app: &App) {
             Paragraph::new(text).block(Block::default().title("search").borders(Borders::ALL)),
             area,
         );
+    }
+
+    if app.file_prompt().is_some() {
+        render_file_prompt(frame, app);
     }
 
     if app.git_view().is_some() {
@@ -88,11 +112,33 @@ pub fn render(frame: &mut Frame, app: &App) {
     let shortcuts = if app.git_view().is_some() {
         "Git: Enter Select · Esc Back · Up/Down/Page Move · Tab Diff View · F1 Help"
     } else {
-        "Ctrl-P Search · Enter/Space Open/Expand · Ctrl-S Save · Ctrl-G Git · F1 Help · Ctrl-Q Quit"
+        "Tab Focus · Ctrl-N New · Ctrl-S Save · Ctrl-D Delete · Ctrl-P Search · Ctrl-G Git · F1 Help · Ctrl-Q Quit"
     };
     frame.render_widget(Paragraph::new(shortcuts), footer[0]);
     let status = app.current_relative().unwrap_or("no file");
     frame.render_widget(Paragraph::new(status.to_string()), footer[1]);
+}
+
+fn render_file_prompt(frame: &mut Frame, app: &App) {
+    let area = centered_rect(60, 20, frame.area());
+    frame.render_widget(Clear, area);
+    let text = match app.file_prompt() {
+        Some(crate::app::FilePrompt::New) => format!("New file path: {}", app.file_prompt_input()),
+        Some(crate::app::FilePrompt::Delete) => format!(
+            "Delete {}? y/N",
+            app.current_relative().unwrap_or("current file")
+        ),
+        None => String::new(),
+    };
+    frame.render_widget(
+        Paragraph::new(text).block(
+            Block::default()
+                .title("file action")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Blue)),
+        ),
+        area,
+    );
 }
 
 fn render_git_overlay(frame: &mut Frame, app: &App) {

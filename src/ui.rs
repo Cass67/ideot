@@ -1,4 +1,5 @@
-use crate::app::App;
+use crate::app::{App, GitView};
+use crate::git::DiffKind;
 use crate::highlight::{Highlighter, SimpleTreeSitterHighlighter};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -71,6 +72,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         );
     }
 
+    if app.git_view().is_some() {
+        render_git_overlay(frame, app);
+    }
+
     if app.help_open() {
         render_help_overlay(frame);
     }
@@ -79,10 +84,99 @@ pub fn render(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(root[1]);
-    let shortcuts = "Ctrl-P Search · Enter/Space Open/Expand · Ctrl-S Save · Ctrl-G Git · F1 Help · Ctrl-Q Quit";
+    let shortcuts = if app.git_view().is_some() {
+        "Git: Enter Select · Esc Back · Up/Down Move · F1 Help"
+    } else {
+        "Ctrl-P Search · Enter/Space Open/Expand · Ctrl-S Save · Ctrl-G Git · F1 Help · Ctrl-Q Quit"
+    };
     frame.render_widget(Paragraph::new(shortcuts), footer[0]);
     let status = app.current_relative().unwrap_or("no file");
     frame.render_widget(Paragraph::new(status.to_string()), footer[1]);
+}
+
+fn render_git_overlay(frame: &mut Frame, app: &App) {
+    let area = centered_rect(90, 80, frame.area());
+    match app.git_view() {
+        Some(GitView::Commits) => {
+            let rows: Vec<ListItem> = app
+                .git_commits()
+                .iter()
+                .enumerate()
+                .map(|(index, commit)| {
+                    let prefix = if index == app.git_selected_index() {
+                        "> "
+                    } else {
+                        "  "
+                    };
+                    ListItem::new(format!("{prefix}{} {}", commit.hash, commit.summary))
+                })
+                .collect();
+            frame.render_widget(
+                List::new(rows).block(Block::default().title("git commits").borders(Borders::ALL)),
+                area,
+            );
+        }
+        Some(GitView::Files) => {
+            let rows: Vec<ListItem> = app
+                .git_files()
+                .iter()
+                .enumerate()
+                .map(|(index, file)| {
+                    let prefix = if index == app.git_selected_index() {
+                        "> "
+                    } else {
+                        "  "
+                    };
+                    ListItem::new(format!("{prefix}{file}"))
+                })
+                .collect();
+            frame.render_widget(
+                List::new(rows).block(
+                    Block::default()
+                        .title("changed files")
+                        .borders(Borders::ALL),
+                ),
+                area,
+            );
+        }
+        Some(GitView::Diff) => render_git_diff(frame, app, area),
+        None => {}
+    }
+}
+
+fn render_git_diff(frame: &mut Frame, app: &App, area: Rect) {
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+    let before: Vec<Line> = app
+        .git_diff_rows()
+        .iter()
+        .map(|row| diff_line(row.before.as_deref().unwrap_or(""), row.kind, true))
+        .collect();
+    let after: Vec<Line> = app
+        .git_diff_rows()
+        .iter()
+        .map(|row| diff_line(row.after.as_deref().unwrap_or(""), row.kind, false))
+        .collect();
+    frame.render_widget(
+        Paragraph::new(before).block(Block::default().title("before").borders(Borders::ALL)),
+        panes[0],
+    );
+    frame.render_widget(
+        Paragraph::new(after).block(Block::default().title("after").borders(Borders::ALL)),
+        panes[1],
+    );
+}
+
+fn diff_line(text: &str, kind: DiffKind, before: bool) -> Line<'static> {
+    let style = match (kind, before) {
+        (DiffKind::Delete, true) => Style::default().fg(Color::Red),
+        (DiffKind::Add, false) => Style::default().fg(Color::Green),
+        (DiffKind::Equal, _) => Style::default(),
+        _ => Style::default().fg(Color::DarkGray),
+    };
+    Line::from(Span::styled(text.to_string(), style))
 }
 
 fn render_help_overlay(frame: &mut Frame) {

@@ -2,6 +2,7 @@ pub mod app;
 pub mod buffer;
 pub mod editor;
 pub mod fs;
+pub mod git;
 pub mod highlight;
 pub mod lsp;
 pub mod marks;

@@ -57,6 +57,9 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     let _ = app.save_current();
                 }
                 (KeyModifiers::CONTROL, KeyCode::Char('p')) => app.toggle_search(),
+                (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
+                    let _ = app.open_git_browser();
+                }
                 (_, KeyCode::F(1)) => app.toggle_help(),
                 (KeyModifiers::CONTROL, KeyCode::Char('m')) => {
                     let _ = app.mark_current_file();
@@ -64,6 +67,12 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (KeyModifiers::CONTROL, KeyCode::Char(ch)) if ('1'..='9').contains(&ch) => {
                     let slot = ch.to_digit(10).unwrap() as usize;
                     let _ = app.jump_to_mark(slot);
+                }
+                (_, KeyCode::Esc) if app.git_view().is_some() => app.git_back(),
+                (_, KeyCode::Down) if app.git_view().is_some() => app.git_move_down(),
+                (_, KeyCode::Up) if app.git_view().is_some() => app.git_move_up(),
+                (_, KeyCode::Enter) if app.git_view().is_some() => {
+                    let _ = app.activate_git_selection();
                 }
                 (_, KeyCode::Down) => app.move_selection_down(),
                 (_, KeyCode::Up) => app.move_selection_up(),

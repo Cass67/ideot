@@ -30,6 +30,10 @@ cargo run
 - `Ctrl-1`..`Ctrl-9`: jump to mark.
 - `Ctrl-Q`: quit.
 
+## Git browser
+
+Press `Ctrl-G` to open the git commit browser. Select a commit, select a changed file, then view a read-only side-by-side aligned before/after diff. Use `Esc` to go back.
+
 ## Build single binary
 
 ```bash

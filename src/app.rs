@@ -3,6 +3,7 @@ pub mod command;
 use crate::buffer::{Buffer, Position};
 use crate::editor::Editor;
 use crate::fs::{ProjectFile, ProjectIndex};
+use crate::git::{self, DiffRow, GitCommit};
 use crate::lsp::{DocumentEvent, DocumentEventSink, NullDocumentEventSink};
 use crate::marks::SessionMarks;
 use crate::search::{RecentFiles, SearchIndex};
@@ -15,6 +16,23 @@ pub struct ExplorerEntry {
     pub label: String,
     pub relative: Option<String>,
     pub is_dir: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitView {
+    Commits,
+    Files,
+    Diff,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GitBrowserState {
+    pub commits: Vec<GitCommit>,
+    pub files: Vec<String>,
+    pub diff_rows: Vec<DiffRow>,
+    pub selected_commit: usize,
+    pub selected_file: usize,
+    pub view: Option<GitView>,
 }
 
 #[derive(Debug)]
@@ -36,6 +54,7 @@ pub struct App {
     explorer_scroll: usize,
     editor_scroll: usize,
     help_open: bool,
+    git: GitBrowserState,
 }
 
 impl App {
@@ -58,6 +77,7 @@ impl App {
             explorer_scroll: 0,
             editor_scroll: 0,
             help_open: false,
+            git: GitBrowserState::default(),
         }
     }
 
@@ -292,6 +312,100 @@ impl App {
 
     pub fn toggle_help(&mut self) {
         self.help_open = !self.help_open;
+    }
+
+    pub fn open_git_browser(&mut self) -> Result<()> {
+        self.git.commits = git::recent_commits(&self.root, 100)?;
+        self.git.files.clear();
+        self.git.diff_rows.clear();
+        self.git.selected_commit = 0;
+        self.git.selected_file = 0;
+        self.git.view = Some(GitView::Commits);
+        Ok(())
+    }
+
+    pub fn git_view(&self) -> Option<GitView> {
+        self.git.view
+    }
+
+    pub fn git_commits(&self) -> &[GitCommit] {
+        &self.git.commits
+    }
+
+    pub fn git_files(&self) -> &[String] {
+        &self.git.files
+    }
+
+    pub fn git_diff_rows(&self) -> &[DiffRow] {
+        &self.git.diff_rows
+    }
+
+    pub fn git_selected_index(&self) -> usize {
+        match self.git.view {
+            Some(GitView::Commits) => self.git.selected_commit,
+            Some(GitView::Files) => self.git.selected_file,
+            _ => 0,
+        }
+    }
+
+    pub fn activate_git_selection(&mut self) -> Result<()> {
+        match self.git.view {
+            Some(GitView::Commits) => {
+                let Some(commit) = self.git.commits.get(self.git.selected_commit) else {
+                    return Ok(());
+                };
+                self.git.files = git::changed_files(&self.root, &commit.hash)?;
+                self.git.selected_file = 0;
+                self.git.view = Some(GitView::Files);
+            }
+            Some(GitView::Files) => {
+                let Some(commit) = self.git.commits.get(self.git.selected_commit) else {
+                    return Ok(());
+                };
+                let Some(file) = self.git.files.get(self.git.selected_file) else {
+                    return Ok(());
+                };
+                self.git.diff_rows = git::diff_file_at_commit(&self.root, &commit.hash, file)?;
+                self.git.view = Some(GitView::Diff);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub fn git_move_down(&mut self) {
+        match self.git.view {
+            Some(GitView::Commits) => {
+                self.git.selected_commit =
+                    (self.git.selected_commit + 1).min(self.git.commits.len().saturating_sub(1))
+            }
+            Some(GitView::Files) => {
+                self.git.selected_file =
+                    (self.git.selected_file + 1).min(self.git.files.len().saturating_sub(1))
+            }
+            _ => {}
+        }
+    }
+
+    pub fn git_move_up(&mut self) {
+        match self.git.view {
+            Some(GitView::Commits) => {
+                self.git.selected_commit = self.git.selected_commit.saturating_sub(1)
+            }
+            Some(GitView::Files) => {
+                self.git.selected_file = self.git.selected_file.saturating_sub(1)
+            }
+            _ => {}
+        }
+    }
+
+    pub fn git_back(&mut self) {
+        self.git.view = match self.git.view {
+            Some(GitView::Diff) => Some(GitView::Files),
+            Some(GitView::Files) => Some(GitView::Commits),
+            Some(GitView::Commits) => None,
+            None => None,
+        };
     }
 
     pub fn search_query(&self) -> &str {

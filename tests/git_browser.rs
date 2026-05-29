@@ -1,0 +1,77 @@
+use ideot::app::{App, GitView};
+use ideot::git::{align_lines, changed_files, recent_commits, DiffKind};
+use std::process::Command;
+use tempfile::tempdir;
+
+#[test]
+fn aligns_before_and_after_lines() {
+    let before = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+    let after = vec![
+        "a".to_string(),
+        "x".to_string(),
+        "c".to_string(),
+        "d".to_string(),
+    ];
+
+    let rows = align_lines(&before, &after);
+
+    assert_eq!(rows[0].kind, DiffKind::Equal);
+    assert_eq!(rows[1].kind, DiffKind::Delete);
+    assert_eq!(rows[2].kind, DiffKind::Add);
+    assert_eq!(rows[3].kind, DiffKind::Equal);
+    assert_eq!(rows[4].kind, DiffKind::Add);
+}
+
+#[test]
+fn reads_commits_and_changed_files_from_git_repo() {
+    let dir = git_repo_with_two_commits();
+
+    let commits = recent_commits(dir.path(), 10).unwrap();
+    assert!(commits.len() >= 2);
+
+    let files = changed_files(dir.path(), &commits[0].hash).unwrap();
+    assert_eq!(files, vec!["file.txt".to_string()]);
+}
+
+#[test]
+fn app_git_flow_loads_commit_file_and_diff() {
+    let dir = git_repo_with_two_commits();
+    let mut app = App::new(dir.path().to_path_buf());
+
+    app.open_git_browser().unwrap();
+    assert!(matches!(app.git_view(), Some(GitView::Commits)));
+
+    app.activate_git_selection().unwrap();
+    assert!(matches!(app.git_view(), Some(GitView::Files)));
+
+    app.activate_git_selection().unwrap();
+    assert!(matches!(app.git_view(), Some(GitView::Diff)));
+    assert!(!app.git_diff_rows().is_empty());
+}
+
+fn git_repo_with_two_commits() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    git(dir.path(), &["init"]);
+    git(dir.path(), &["config", "user.email", "test@example.com"]);
+    git(dir.path(), &["config", "user.name", "Test User"]);
+    std::fs::write(dir.path().join("file.txt"), "one\ntwo\n").unwrap();
+    git(dir.path(), &["add", "file.txt"]);
+    git(dir.path(), &["commit", "-m", "first"]);
+    std::fs::write(dir.path().join("file.txt"), "one\nthree\n").unwrap();
+    git(dir.path(), &["add", "file.txt"]);
+    git(dir.path(), &["commit", "-m", "second"]);
+    dir
+}
+
+fn git(cwd: &std::path::Path, args: &[&str]) {
+    let output = Command::new("git")
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

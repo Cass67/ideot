@@ -4,7 +4,7 @@ use crate::highlight::{Highlighter, SimpleTreeSitterHighlighter};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -66,6 +66,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     if app.search_open() {
         let area = centered_rect(60, 20, frame.area());
         let text = format!("Find file: {}", app.search_query());
+        frame.render_widget(Clear, area);
         frame.render_widget(
             Paragraph::new(text).block(Block::default().title("search").borders(Borders::ALL)),
             area,
@@ -96,6 +97,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
 fn render_git_overlay(frame: &mut Frame, app: &App) {
     let area = centered_rect(90, 80, frame.area());
+    frame.render_widget(Clear, area);
     match app.git_view() {
         Some(GitView::Commits) => {
             let rows: Vec<ListItem> = app
@@ -112,7 +114,12 @@ fn render_git_overlay(frame: &mut Frame, app: &App) {
                 })
                 .collect();
             frame.render_widget(
-                List::new(rows).block(Block::default().title("git commits").borders(Borders::ALL)),
+                List::new(rows).block(
+                    Block::default()
+                        .title("git commits")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Blue)),
+                ),
                 area,
             );
         }
@@ -134,7 +141,8 @@ fn render_git_overlay(frame: &mut Frame, app: &App) {
                 List::new(rows).block(
                     Block::default()
                         .title("changed files")
-                        .borders(Borders::ALL),
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Blue)),
                 ),
                 area,
             );
@@ -149,33 +157,71 @@ fn render_git_diff(frame: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
+    frame.render_widget(Clear, area);
+    let height = area.height.saturating_sub(2) as usize;
     let before: Vec<Line> = app
         .git_diff_rows()
         .iter()
-        .map(|row| diff_line(row.before.as_deref().unwrap_or(""), row.kind, true))
+        .enumerate()
+        .skip(app.git_diff_scroll())
+        .take(height)
+        .map(|(index, row)| {
+            diff_line(
+                row.before.as_deref().unwrap_or(""),
+                row.kind,
+                true,
+                app.git_diff_selected_row() == Some(index)
+                    && app.git_diff_selected_side() == Some(true),
+            )
+        })
         .collect();
     let after: Vec<Line> = app
         .git_diff_rows()
         .iter()
-        .map(|row| diff_line(row.after.as_deref().unwrap_or(""), row.kind, false))
+        .enumerate()
+        .skip(app.git_diff_scroll())
+        .take(height)
+        .map(|(index, row)| {
+            diff_line(
+                row.after.as_deref().unwrap_or(""),
+                row.kind,
+                false,
+                app.git_diff_selected_row() == Some(index)
+                    && app.git_diff_selected_side() == Some(false),
+            )
+        })
         .collect();
+    let border = Style::default().fg(Color::Blue);
     frame.render_widget(
-        Paragraph::new(before).block(Block::default().title("before").borders(Borders::ALL)),
+        Paragraph::new(before).block(
+            Block::default()
+                .title("before")
+                .borders(Borders::ALL)
+                .border_style(border),
+        ),
         panes[0],
     );
     frame.render_widget(
-        Paragraph::new(after).block(Block::default().title("after").borders(Borders::ALL)),
+        Paragraph::new(after).block(
+            Block::default()
+                .title("after")
+                .borders(Borders::ALL)
+                .border_style(border),
+        ),
         panes[1],
     );
 }
 
-fn diff_line(text: &str, kind: DiffKind, before: bool) -> Line<'static> {
-    let style = match (kind, before) {
+fn diff_line(text: &str, kind: DiffKind, before: bool, selected: bool) -> Line<'static> {
+    let mut style = match (kind, before) {
         (DiffKind::Delete, true) => Style::default().fg(Color::Red),
         (DiffKind::Add, false) => Style::default().fg(Color::Green),
         (DiffKind::Equal, _) => Style::default(),
         _ => Style::default().fg(Color::DarkGray),
     };
+    if selected {
+        style = style.bg(Color::Blue);
+    }
     Line::from(Span::styled(text.to_string(), style))
 }
 
@@ -197,6 +243,7 @@ fn render_help_overlay(frame: &mut Frame) {
         Line::from("  Click editor pane  Move cursor"),
         Line::from("  Wheel              Scroll hovered pane"),
     ];
+    frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(help).block(Block::default().title("help").borders(Borders::ALL)),
         area,

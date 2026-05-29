@@ -9,7 +9,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ideot::{app::App, ui};
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 use std::{io, time::Duration};
 
 fn main() -> Result<()> {
@@ -92,6 +92,14 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 let in_content_rows = mouse.row > 0 && mouse.row < content_height.saturating_sub(1);
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left)
+                        if app.git_view() == Some(ideot::app::GitView::Diff) =>
+                    {
+                        let area = git_overlay_area(size.width, size.height);
+                        let before_side = mouse.column < area.x + area.width / 2;
+                        let row = mouse.row.saturating_sub(area.y + 1) as usize;
+                        app.click_git_diff_row(row, before_side);
+                    }
+                    MouseEventKind::Down(MouseButton::Left)
                         if mouse.column < explorer_width && in_content_rows =>
                     {
                         let row = mouse.row.saturating_sub(1) as usize;
@@ -103,6 +111,16 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                         let row = mouse.row.saturating_sub(1) as usize;
                         let column = mouse.column.saturating_sub(explorer_width + 1) as usize;
                         app.place_editor_cursor(row, column);
+                    }
+                    MouseEventKind::ScrollDown
+                        if app.git_view() == Some(ideot::app::GitView::Diff) =>
+                    {
+                        app.scroll_git_diff_down()
+                    }
+                    MouseEventKind::ScrollUp
+                        if app.git_view() == Some(ideot::app::GitView::Diff) =>
+                    {
+                        app.scroll_git_diff_up()
                     }
                     MouseEventKind::ScrollDown if mouse.column < explorer_width => {
                         app.scroll_explorer_down()
@@ -119,4 +137,15 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
         }
     }
     Ok(())
+}
+
+fn git_overlay_area(width: u16, height: u16) -> Rect {
+    let area_width = width * 90 / 100;
+    let area_height = height * 80 / 100;
+    Rect::new(
+        (width - area_width) / 2,
+        (height - area_height) / 2,
+        area_width,
+        area_height,
+    )
 }

@@ -34,6 +34,29 @@ fn reads_commits_and_changed_files_from_git_repo() {
 }
 
 #[test]
+fn git_diff_view_scrolls_and_clicks_before_after_panes() {
+    let dir = git_repo_with_two_commits();
+    let mut app = App::new(dir.path().to_path_buf());
+    app.open_git_browser().unwrap();
+    app.activate_git_selection().unwrap();
+    app.activate_git_selection().unwrap();
+
+    assert_eq!(app.git_diff_scroll(), 0);
+    app.scroll_git_diff_down();
+    app.scroll_git_diff_down();
+    assert_eq!(app.git_diff_scroll(), 2);
+    app.scroll_git_diff_up();
+    assert_eq!(app.git_diff_scroll(), 1);
+
+    app.click_git_diff_row(0, true);
+    assert_eq!(app.git_diff_selected_row(), Some(1));
+    assert_eq!(app.git_diff_selected_side(), Some(true));
+    app.click_git_diff_row(2, false);
+    assert_eq!(app.git_diff_selected_row(), Some(3));
+    assert_eq!(app.git_diff_selected_side(), Some(false));
+}
+
+#[test]
 fn app_git_flow_loads_commit_file_and_diff() {
     let dir = git_repo_with_two_commits();
     let mut app = App::new(dir.path().to_path_buf());
@@ -54,10 +77,18 @@ fn git_repo_with_two_commits() -> tempfile::TempDir {
     git(dir.path(), &["init"]);
     git(dir.path(), &["config", "user.email", "test@example.com"]);
     git(dir.path(), &["config", "user.name", "Test User"]);
-    std::fs::write(dir.path().join("file.txt"), "one\ntwo\n").unwrap();
+    std::fs::write(
+        dir.path().join("file.txt"),
+        "one\ntwo\nthree\nfour\nfive\nsix\n",
+    )
+    .unwrap();
     git(dir.path(), &["add", "file.txt"]);
     git(dir.path(), &["commit", "-m", "first"]);
-    std::fs::write(dir.path().join("file.txt"), "one\nthree\n").unwrap();
+    std::fs::write(
+        dir.path().join("file.txt"),
+        "one\nTWO\nthree\nFOUR\nfive\nSIX\nseven\n",
+    )
+    .unwrap();
     git(dir.path(), &["add", "file.txt"]);
     git(dir.path(), &["commit", "-m", "second"]);
     dir

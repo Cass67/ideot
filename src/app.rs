@@ -33,6 +33,9 @@ pub struct GitBrowserState {
     pub selected_commit: usize,
     pub selected_file: usize,
     pub view: Option<GitView>,
+    pub diff_scroll: usize,
+    pub diff_selected_row: Option<usize>,
+    pub diff_selected_before: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -340,6 +343,18 @@ impl App {
         &self.git.diff_rows
     }
 
+    pub fn git_diff_scroll(&self) -> usize {
+        self.git.diff_scroll
+    }
+
+    pub fn git_diff_selected_row(&self) -> Option<usize> {
+        self.git.diff_selected_row
+    }
+
+    pub fn git_diff_selected_side(&self) -> Option<bool> {
+        self.git.diff_selected_before
+    }
+
     pub fn git_selected_index(&self) -> usize {
         match self.git.view {
             Some(GitView::Commits) => self.git.selected_commit,
@@ -366,6 +381,9 @@ impl App {
                     return Ok(());
                 };
                 self.git.diff_rows = git::diff_file_at_commit(&self.root, &commit.hash, file)?;
+                self.git.diff_scroll = 0;
+                self.git.diff_selected_row = None;
+                self.git.diff_selected_before = None;
                 self.git.view = Some(GitView::Diff);
             }
             _ => {}
@@ -383,6 +401,7 @@ impl App {
                 self.git.selected_file =
                     (self.git.selected_file + 1).min(self.git.files.len().saturating_sub(1))
             }
+            Some(GitView::Diff) => self.scroll_git_diff_down(),
             _ => {}
         }
     }
@@ -395,7 +414,28 @@ impl App {
             Some(GitView::Files) => {
                 self.git.selected_file = self.git.selected_file.saturating_sub(1)
             }
+            Some(GitView::Diff) => self.scroll_git_diff_up(),
             _ => {}
+        }
+    }
+
+    pub fn scroll_git_diff_down(&mut self) {
+        self.git.diff_scroll =
+            (self.git.diff_scroll + 1).min(self.git.diff_rows.len().saturating_sub(1));
+    }
+
+    pub fn scroll_git_diff_up(&mut self) {
+        self.git.diff_scroll = self.git.diff_scroll.saturating_sub(1);
+    }
+
+    pub fn click_git_diff_row(&mut self, visible_row: usize, before_side: bool) {
+        if self.git.view != Some(GitView::Diff) {
+            return;
+        }
+        let row = self.git.diff_scroll + visible_row;
+        if row < self.git.diff_rows.len() {
+            self.git.diff_selected_row = Some(row);
+            self.git.diff_selected_before = Some(before_side);
         }
     }
 

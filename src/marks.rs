@@ -6,7 +6,11 @@ pub struct SessionMarks {
 impl SessionMarks {
     pub fn mark(&mut self, relative: impl Into<String>) -> usize {
         let relative = relative.into();
-        if let Some(index) = self.slots.iter().position(|item| item.as_deref() == Some(relative.as_str())) {
+        if let Some(index) = self
+            .slots
+            .iter()
+            .position(|item| item.as_deref() == Some(relative.as_str()))
+        {
             return index + 1;
         }
         let index = self.slots.iter().position(Option::is_none).unwrap_or(0);
@@ -22,6 +26,9 @@ impl SessionMarks {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (usize, &String)> {
-        self.slots.iter().enumerate().filter_map(|(index, value)| value.as_ref().map(|path| (index + 1, path)))
+        self.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, value)| value.as_ref().map(|path| (index + 1, path)))
     }
 }

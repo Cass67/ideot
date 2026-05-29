@@ -35,16 +35,25 @@ impl SearchIndex {
             return self.files.clone();
         }
         let mut matcher = Matcher::new(Config::DEFAULT);
-        let pattern = Pattern::parse(query, nucleo_matcher::pattern::CaseMatching::Smart, nucleo_matcher::pattern::Normalization::Smart);
+        let pattern = Pattern::parse(
+            query,
+            nucleo_matcher::pattern::CaseMatching::Smart,
+            nucleo_matcher::pattern::Normalization::Smart,
+        );
         let mut scored: Vec<(i64, ProjectFile)> = self
             .files
             .iter()
             .filter_map(|file| {
                 let haystack = Utf32String::from(file.relative.as_str());
-                pattern.score(haystack.slice(..), &mut matcher).map(|score| {
-                    let boost = recent.rank(&file.relative).map(|rank| 10_000 - rank as i64).unwrap_or(0);
-                    (score as i64 + boost, file.clone())
-                })
+                pattern
+                    .score(haystack.slice(..), &mut matcher)
+                    .map(|score| {
+                        let boost = recent
+                            .rank(&file.relative)
+                            .map(|rank| 10_000 - rank as i64)
+                            .unwrap_or(0);
+                        (score as i64 + boost, file.clone())
+                    })
             })
             .collect();
         scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.relative.cmp(&b.1.relative)));

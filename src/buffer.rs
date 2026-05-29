@@ -21,7 +21,11 @@ impl Buffer {
         } else {
             text.split('\n').map(ToOwned::to_owned).collect()
         };
-        Self { path: None, lines, dirty: false }
+        Self {
+            path: None,
+            lines,
+            dirty: false,
+        }
     }
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
@@ -35,7 +39,8 @@ impl Buffer {
 
     pub fn save(&mut self) -> Result<()> {
         let path = self.path.as_ref().context("buffer has no path")?;
-        std::fs::write(path, self.text()).with_context(|| format!("failed to write {}", path.display()))?;
+        std::fs::write(path, self.text())
+            .with_context(|| format!("failed to write {}", path.display()))?;
         self.dirty = false;
         Ok(())
     }

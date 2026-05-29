@@ -18,7 +18,11 @@ impl ProjectIndex {
     pub fn build(root: impl AsRef<Path>) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
         let mut files = Vec::new();
-        for entry in WalkBuilder::new(&root).hidden(false).require_git(false).build() {
+        for entry in WalkBuilder::new(&root)
+            .hidden(false)
+            .require_git(false)
+            .build()
+        {
             let entry = entry.context("failed to walk project")?;
             if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
                 continue;

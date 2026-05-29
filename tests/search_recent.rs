@@ -3,12 +3,19 @@ use ideot::search::{RecentFiles, SearchIndex};
 use std::path::PathBuf;
 
 fn file(path: &str) -> ProjectFile {
-    ProjectFile { absolute: PathBuf::from(path), relative: path.to_string() }
+    ProjectFile {
+        absolute: PathBuf::from(path),
+        relative: path.to_string(),
+    }
 }
 
 #[test]
 fn fuzzy_search_returns_matching_files() {
-    let files = vec![file("src/main.rs"), file("docs/design.md"), file("Cargo.toml")];
+    let files = vec![
+        file("src/main.rs"),
+        file("docs/design.md"),
+        file("Cargo.toml"),
+    ];
     let search = SearchIndex::new(files);
 
     let results = search.query("main", &RecentFiles::default());

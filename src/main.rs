@@ -1,6 +1,9 @@
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
+        MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -22,7 +25,11 @@ fn main() -> Result<()> {
     let result = run(&mut terminal, &mut app);
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), DisableMouseCapture, LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()?;
     result
 }
@@ -61,13 +68,36 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (_, KeyCode::Char(ch)) => app.insert_char(ch),
                 _ => {}
             },
-            Event::Mouse(mouse) => match mouse.kind {
-                MouseEventKind::ScrollDown if mouse.column < terminal.size()?.width / 3 => app.scroll_explorer_down(),
-                MouseEventKind::ScrollUp if mouse.column < terminal.size()?.width / 3 => app.scroll_explorer_up(),
-                MouseEventKind::ScrollDown => app.scroll_editor_down(),
-                MouseEventKind::ScrollUp => app.scroll_editor_up(),
-                _ => {}
-            },
+            Event::Mouse(mouse) => {
+                let size = terminal.size()?;
+                let explorer_width = size.width * 30 / 100;
+                let content_height = size.height.saturating_sub(1);
+                let in_content_rows = mouse.row > 0 && mouse.row < content_height.saturating_sub(1);
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left)
+                        if mouse.column < explorer_width && in_content_rows =>
+                    {
+                        let row = mouse.row.saturating_sub(1) as usize;
+                        let _ = app.activate_explorer_visible_row(row);
+                    }
+                    MouseEventKind::Down(MouseButton::Left)
+                        if mouse.column > explorer_width && in_content_rows =>
+                    {
+                        let row = mouse.row.saturating_sub(1) as usize;
+                        let column = mouse.column.saturating_sub(explorer_width + 1) as usize;
+                        app.place_editor_cursor(row, column);
+                    }
+                    MouseEventKind::ScrollDown if mouse.column < explorer_width => {
+                        app.scroll_explorer_down()
+                    }
+                    MouseEventKind::ScrollUp if mouse.column < explorer_width => {
+                        app.scroll_explorer_up()
+                    }
+                    MouseEventKind::ScrollDown => app.scroll_editor_down(),
+                    MouseEventKind::ScrollUp => app.scroll_editor_up(),
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }

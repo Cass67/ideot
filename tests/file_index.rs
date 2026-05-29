@@ -12,7 +12,11 @@ fn indexes_files_relative_to_root_and_respects_gitignore() {
     std::fs::write(dir.path().join(".gitignore"), "target\n").unwrap();
 
     let index = ProjectIndex::build(dir.path()).unwrap();
-    let paths: Vec<_> = index.files().iter().map(|file| file.relative.as_str()).collect();
+    let paths: Vec<_> = index
+        .files()
+        .iter()
+        .map(|file| file.relative.as_str())
+        .collect();
 
     assert!(paths.contains(&"src/main.rs"));
     assert!(paths.contains(&"README.md"));

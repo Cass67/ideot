@@ -23,7 +23,11 @@ pub fn render(frame: &mut Frame, app: &App) {
             .skip(app.explorer_scroll())
             .take(200)
             .map(|(index, file)| {
-                let prefix = if index == app.selected_file() { "> " } else { "  " };
+                let prefix = if index == app.selected_file() {
+                    "> "
+                } else {
+                    "  "
+                };
                 ListItem::new(format!("{prefix}{}", file.relative))
             })
             .collect()
@@ -34,20 +38,34 @@ pub fn render(frame: &mut Frame, app: &App) {
             .skip(app.explorer_scroll())
             .take(200)
             .map(|(index, entry)| {
-                let prefix = if index == app.selected_file() { "> " } else { "  " };
+                let prefix = if index == app.selected_file() {
+                    "> "
+                } else {
+                    "  "
+                };
                 ListItem::new(format!("{prefix}{}", entry.label))
             })
             .collect()
     };
-    frame.render_widget(List::new(files).block(Block::default().title("files").borders(Borders::ALL)), panes[0]);
+    frame.render_widget(
+        List::new(files).block(Block::default().title("files").borders(Borders::ALL)),
+        panes[0],
+    );
 
-    let editor_lines = highlighted_editor_lines_for_height(app, panes[1].height.saturating_sub(2) as usize);
-    frame.render_widget(Paragraph::new(editor_lines).block(Block::default().title("editor").borders(Borders::ALL)), panes[1]);
+    let editor_lines =
+        highlighted_editor_lines_for_height(app, panes[1].height.saturating_sub(2) as usize);
+    frame.render_widget(
+        Paragraph::new(editor_lines).block(Block::default().title("editor").borders(Borders::ALL)),
+        panes[1],
+    );
 
     if app.search_open() {
         let area = centered_rect(60, 20, frame.area());
         let text = format!("Find file: {}", app.search_query());
-        frame.render_widget(Paragraph::new(text).block(Block::default().title("search").borders(Borders::ALL)), area);
+        frame.render_widget(
+            Paragraph::new(text).block(Block::default().title("search").borders(Borders::ALL)),
+            area,
+        );
     }
 
     let status = app.current_relative().unwrap_or("no file");
@@ -56,7 +74,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 
 pub fn highlighted_editor_lines_for_height(app: &App, height: usize) -> Vec<Line<'static>> {
     let Some(editor) = app.editor() else {
-        return vec![Line::from("Open a file with Ctrl-P or select from explorer")];
+        return vec![Line::from(
+            "Open a file with Ctrl-P or select from explorer",
+        )];
     };
     let mut highlighter = SimpleTreeSitterHighlighter::default();
     editor
@@ -69,7 +89,11 @@ pub fn highlighted_editor_lines_for_height(app: &App, height: usize) -> Vec<Line
         .collect()
 }
 
-fn highlighted_line(highlighter: &mut dyn Highlighter, language_hint: Option<&str>, line: &str) -> Line<'static> {
+fn highlighted_line(
+    highlighter: &mut dyn Highlighter,
+    language_hint: Option<&str>,
+    line: &str,
+) -> Line<'static> {
     let spans = highlighter.highlight_line(language_hint, line);
     if spans.is_empty() {
         return Line::from(line.to_string());
@@ -84,7 +108,10 @@ fn highlighted_line(highlighter: &mut dyn Highlighter, language_hint: Option<&st
         if span.start > cursor {
             rendered.push(Span::raw(line[cursor..span.start].to_string()));
         }
-        rendered.push(Span::styled(line[span.start..span.end].to_string(), span.style));
+        rendered.push(Span::styled(
+            line[span.start..span.end].to_string(),
+            span.style,
+        ));
         cursor = span.end;
     }
     if cursor < line.len() {

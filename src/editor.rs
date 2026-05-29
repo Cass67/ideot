@@ -8,7 +8,10 @@ pub struct Editor {
 
 impl Editor {
     pub fn new(buffer: Buffer) -> Self {
-        Self { buffer, cursor: Position { line: 0, column: 0 } }
+        Self {
+            buffer,
+            cursor: Position { line: 0, column: 0 },
+        }
     }
 
     pub fn buffer(&self) -> &Buffer {
@@ -23,17 +26,36 @@ impl Editor {
         self.cursor
     }
 
+    pub fn set_cursor(&mut self, position: Position) {
+        let line = position
+            .line
+            .min(self.buffer.line_count().saturating_sub(1));
+        let line_len = self.buffer.line(line).map(str::len).unwrap_or(0);
+        self.cursor = Position {
+            line,
+            column: position.column.min(line_len),
+        };
+    }
+
     pub fn move_left(&mut self) {
         if self.cursor.column > 0 {
             self.cursor.column -= 1;
         } else if self.cursor.line > 0 {
             self.cursor.line -= 1;
-            self.cursor.column = self.buffer.line(self.cursor.line).map(str::len).unwrap_or(0);
+            self.cursor.column = self
+                .buffer
+                .line(self.cursor.line)
+                .map(str::len)
+                .unwrap_or(0);
         }
     }
 
     pub fn move_right(&mut self) {
-        let line_len = self.buffer.line(self.cursor.line).map(str::len).unwrap_or(0);
+        let line_len = self
+            .buffer
+            .line(self.cursor.line)
+            .map(str::len)
+            .unwrap_or(0);
         if self.cursor.column < line_len {
             self.cursor.column += 1;
         } else if self.cursor.line + 1 < self.buffer.line_count() {
@@ -84,7 +106,11 @@ impl Editor {
     }
 
     fn clamp_column(&mut self) {
-        let line_len = self.buffer.line(self.cursor.line).map(str::len).unwrap_or(0);
+        let line_len = self
+            .buffer
+            .line(self.cursor.line)
+            .map(str::len)
+            .unwrap_or(0);
         self.cursor.column = self.cursor.column.min(line_len);
     }
 }

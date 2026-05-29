@@ -1,6 +1,6 @@
 pub mod command;
 
-use crate::buffer::Buffer;
+use crate::buffer::{Buffer, Position};
 use crate::editor::Editor;
 use crate::fs::{ProjectFile, ProjectIndex};
 use crate::lsp::{DocumentEvent, DocumentEventSink, NullDocumentEventSink};
@@ -83,8 +83,13 @@ impl App {
     pub fn insert_char(&mut self, ch: char) {
         if let Some(editor) = &mut self.editor {
             editor.insert_char(ch);
-            if let (Some(relative), Some(path)) = (self.current_relative.as_ref(), editor.buffer().path()) {
-                self.lsp_sink.send(DocumentEvent::Changed { path: path.to_path_buf(), text: editor.buffer().text() });
+            if let (Some(relative), Some(path)) =
+                (self.current_relative.as_ref(), editor.buffer().path())
+            {
+                self.lsp_sink.send(DocumentEvent::Changed {
+                    path: path.to_path_buf(),
+                    text: editor.buffer().text(),
+                });
                 self.recent.record(relative.clone());
             }
         }
@@ -94,7 +99,10 @@ impl App {
         if let Some(editor) = &mut self.editor {
             editor.backspace();
             if let Some(path) = editor.buffer().path() {
-                self.lsp_sink.send(DocumentEvent::Changed { path: path.to_path_buf(), text: editor.buffer().text() });
+                self.lsp_sink.send(DocumentEvent::Changed {
+                    path: path.to_path_buf(),
+                    text: editor.buffer().text(),
+                });
             }
         }
     }
@@ -103,7 +111,10 @@ impl App {
         let editor = self.editor.as_mut().context("no open file")?;
         editor.buffer_mut().save()?;
         if let Some(path) = editor.buffer().path() {
-            self.lsp_sink.send(DocumentEvent::Saved { path: path.to_path_buf(), text: editor.buffer().text() });
+            self.lsp_sink.send(DocumentEvent::Saved {
+                path: path.to_path_buf(),
+                text: editor.buffer().text(),
+            });
         }
         self.status = "saved".to_string();
         Ok(())
@@ -114,7 +125,9 @@ impl App {
     }
 
     pub fn explorer_entries(&self) -> Vec<ExplorerEntry> {
-        let Some(index) = &self.index else { return Vec::new(); };
+        let Some(index) = &self.index else {
+            return Vec::new();
+        };
         let mut dirs = BTreeSet::new();
         let mut root_files = Vec::new();
         for file in index.files() {
@@ -138,7 +151,11 @@ impl App {
                 continue;
             }
             let depth = dir.matches('/').count();
-            let marker = if self.expanded_dirs.contains(&dir) { '▾' } else { '▸' };
+            let marker = if self.expanded_dirs.contains(&dir) {
+                '▾'
+            } else {
+                '▸'
+            };
             entries.push(ExplorerEntry {
                 label: format!("{}{marker} {dir}", "  ".repeat(depth)),
                 relative: None,
@@ -146,7 +163,11 @@ impl App {
             });
             if self.expanded_dirs.contains(&dir) {
                 let file_indent = "  ".repeat(depth + 2);
-                for file in index.files().iter().filter(|file| direct_child_file(&file.relative, &dir)) {
+                for file in index
+                    .files()
+                    .iter()
+                    .filter(|file| direct_child_file(&file.relative, &dir))
+                {
                     entries.push(ExplorerEntry {
                         label: format!("{file_indent}{}", file.relative),
                         relative: Some(file.relative.clone()),
@@ -155,7 +176,11 @@ impl App {
                 }
             }
         }
-        entries.extend(root_files.into_iter().map(|file| ExplorerEntry { label: format!("  {file}"), relative: Some(file), is_dir: false }));
+        entries.extend(root_files.into_iter().map(|file| ExplorerEntry {
+            label: format!("  {file}"),
+            relative: Some(file),
+            is_dir: false,
+        }));
         entries
     }
 
@@ -177,7 +202,9 @@ impl App {
 
     pub fn move_selection_down(&mut self) {
         let max = if self.search_open {
-            self.search(self.search_query.as_str()).len().saturating_sub(1)
+            self.search(self.search_query.as_str())
+                .len()
+                .saturating_sub(1)
         } else {
             self.explorer_entries().len().saturating_sub(1)
         };
@@ -193,7 +220,11 @@ impl App {
     }
 
     pub fn open_selected(&mut self) -> Result<()> {
-        let query = if self.search_open { self.search_query.as_str() } else { "" };
+        let query = if self.search_open {
+            self.search_query.as_str()
+        } else {
+            ""
+        };
         let files = self.search(query);
         if let Some(file) = files.get(self.selected_file) {
             let relative = file.relative.clone();
@@ -206,18 +237,41 @@ impl App {
         if self.search_open {
             return self.open_selected();
         }
-        let Some(entry) = self.explorer_entries().get(self.selected_file).cloned() else {
+        self.activate_explorer_index(self.selected_file)
+    }
+
+    pub fn activate_explorer_visible_row(&mut self, row: usize) -> Result<()> {
+        let index = self.explorer_scroll + row;
+        self.selected_file = index.min(self.explorer_entries().len().saturating_sub(1));
+        self.activate_explorer_index(index)
+    }
+
+    fn activate_explorer_index(&mut self, index: usize) -> Result<()> {
+        let Some(entry) = self.explorer_entries().get(index).cloned() else {
             return Ok(());
         };
         if let Some(relative) = entry.relative {
             self.open_relative(&relative)?;
         } else if entry.is_dir {
-            let dir = entry.label.trim_start_matches([' ', '▸', '▾']).trim().to_string();
+            let dir = entry
+                .label
+                .trim_start_matches([' ', '▸', '▾'])
+                .trim()
+                .to_string();
             if !self.expanded_dirs.insert(dir.clone()) {
                 self.expanded_dirs.remove(&dir);
             }
         }
         Ok(())
+    }
+
+    pub fn place_editor_cursor(&mut self, visible_row: usize, column: usize) {
+        if let Some(editor) = &mut self.editor {
+            editor.set_cursor(Position {
+                line: self.editor_scroll + visible_row,
+                column,
+            });
+        }
     }
 
     pub fn toggle_search(&mut self) {
@@ -284,7 +338,10 @@ impl App {
 }
 
 fn direct_child_file(file: &str, dir: &str) -> bool {
-    let Some(rest) = file.strip_prefix(dir).and_then(|rest| rest.strip_prefix('/')) else {
+    let Some(rest) = file
+        .strip_prefix(dir)
+        .and_then(|rest| rest.strip_prefix('/'))
+    else {
         return false;
     };
     !rest.contains('/')

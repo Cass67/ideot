@@ -11,18 +11,119 @@ fn rust_highlighter_styles_richer_rust_syntax() {
     let line = "pub struct App { name: String, count: usize }";
     let spans = highlighter.highlight_line(Some("rs"), line);
 
-    assert!(spans.iter().any(|span| &line[span.start..span.end] == "pub" && span.style.fg == Some(Color::Magenta)));
-    assert!(spans.iter().any(|span| &line[span.start..span.end] == "struct" && span.style.fg == Some(Color::Magenta)));
-    assert!(spans.iter().any(|span| &line[span.start..span.end] == "App" && span.style.fg == Some(Color::Blue)));
-    assert!(spans.iter().any(|span| &line[span.start..span.end] == "String" && span.style.fg == Some(Color::Blue)));
-    assert!(spans.iter().any(|span| &line[span.start..span.end] == "usize" && span.style.fg == Some(Color::Blue)));
+    assert_styled(&spans, line, "pub", Color::Magenta);
+    assert_styled(&spans, line, "struct", Color::Magenta);
+    assert_styled(&spans, line, "App", Color::Blue);
+    assert_styled(&spans, line, "String", Color::Blue);
+    assert_styled(&spans, line, "usize", Color::Blue);
+}
+
+#[test]
+fn highlighter_supports_go_python_javascript_toml_yaml_and_markdown() {
+    let mut highlighter = SimpleTreeSitterHighlighter::default();
+
+    let go = "func main() { var name string }";
+    assert_styled(
+        &highlighter.highlight_line(Some("go"), go),
+        go,
+        "func",
+        Color::Magenta,
+    );
+    assert_styled(
+        &highlighter.highlight_line(Some("go"), go),
+        go,
+        "main",
+        Color::Cyan,
+    );
+
+    let python = "def main(): return 42";
+    assert_styled(
+        &highlighter.highlight_line(Some("py"), python),
+        python,
+        "def",
+        Color::Magenta,
+    );
+    assert_styled(
+        &highlighter.highlight_line(Some("py"), python),
+        python,
+        "main",
+        Color::Cyan,
+    );
+
+    let js = "function main() { const x = 1 }";
+    assert_styled(
+        &highlighter.highlight_line(Some("js"), js),
+        js,
+        "function",
+        Color::Magenta,
+    );
+    assert_styled(
+        &highlighter.highlight_line(Some("js"), js),
+        js,
+        "main",
+        Color::Cyan,
+    );
+
+    let toml = "name = \"ideot\"";
+    assert_styled(
+        &highlighter.highlight_line(Some("toml"), toml),
+        toml,
+        "name",
+        Color::Cyan,
+    );
+    assert_styled(
+        &highlighter.highlight_line(Some("toml"), toml),
+        toml,
+        "\"ideot\"",
+        Color::Green,
+    );
+
+    let yaml = "name: ideot";
+    assert_styled(
+        &highlighter.highlight_line(Some("yaml"), yaml),
+        yaml,
+        "name",
+        Color::Cyan,
+    );
+    assert_styled(
+        &highlighter.highlight_line(Some("yaml"), yaml),
+        yaml,
+        "ideot",
+        Color::Green,
+    );
+
+    let markdown = "# Heading";
+    assert_styled(
+        &highlighter.highlight_line(Some("md"), markdown),
+        markdown,
+        "#",
+        Color::Magenta,
+    );
+    assert_styled(
+        &highlighter.highlight_line(Some("md"), markdown),
+        markdown,
+        "Heading",
+        Color::Cyan,
+    );
+}
+
+fn assert_styled(spans: &[ideot::highlight::HighlightSpan], line: &str, text: &str, color: Color) {
+    assert!(
+        spans
+            .iter()
+            .any(|span| &line[span.start..span.end] == text && span.style.fg == Some(color)),
+        "expected {text:?} in {line:?} to be styled {color:?}; spans: {spans:?}"
+    );
 }
 
 #[test]
 fn editor_highlighting_is_limited_to_visible_viewport() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("main.rs");
-    let text = (0..100).map(|i| format!("fn line_{i}() {{}}" )).collect::<Vec<_>>().join("\n");
+    let text = (0..100)
+        .map(|i| format!("fn line_{i}() {{}}"))
+        .collect::<Vec<_>>()
+        .join("\n");
     std::fs::write(&path, text).unwrap();
 
     let mut app = App::new(dir.path().to_path_buf());
@@ -44,7 +145,11 @@ fn explorer_entries_default_to_collapsed_directories() {
 
     let mut app = App::new(dir.path().to_path_buf());
     app.rebuild_index().unwrap();
-    let labels: Vec<_> = app.explorer_entries().into_iter().map(|entry| entry.label).collect();
+    let labels: Vec<_> = app
+        .explorer_entries()
+        .into_iter()
+        .map(|entry| entry.label)
+        .collect();
 
     assert!(labels.contains(&"  README.md".to_string()));
     assert!(labels.contains(&"▸ src".to_string()));
@@ -64,7 +169,11 @@ fn toggling_selected_directory_expands_children_and_files_open() {
     app.rebuild_index().unwrap();
 
     app.activate_selected().unwrap();
-    let labels: Vec<_> = app.explorer_entries().into_iter().map(|entry| entry.label).collect();
+    let labels: Vec<_> = app
+        .explorer_entries()
+        .into_iter()
+        .map(|entry| entry.label)
+        .collect();
     assert!(labels.contains(&"▾ src".to_string()));
     assert!(labels.contains(&"    src/main.rs".to_string()));
     assert!(labels.contains(&"  ▸ src/nested".to_string()));
@@ -72,6 +181,29 @@ fn toggling_selected_directory_expands_children_and_files_open() {
     app.move_selection_down();
     app.activate_selected().unwrap();
     assert_eq!(app.current_relative(), Some("src/main.rs"));
+}
+
+#[test]
+fn mouse_activation_opens_tree_files_and_places_editor_cursor() {
+    let dir = tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/main.rs"), "abc\ndef").unwrap();
+
+    let mut app = App::new(dir.path().to_path_buf());
+    app.rebuild_index().unwrap();
+
+    app.activate_explorer_visible_row(0).unwrap();
+    assert!(app
+        .explorer_entries()
+        .iter()
+        .any(|entry| entry.label == "    src/main.rs"));
+
+    app.activate_explorer_visible_row(1).unwrap();
+    assert_eq!(app.current_relative(), Some("src/main.rs"));
+
+    app.place_editor_cursor(1, 2);
+    assert_eq!(app.editor().unwrap().cursor().line, 1);
+    assert_eq!(app.editor().unwrap().cursor().column, 2);
 }
 
 #[test]

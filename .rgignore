@@ -1,7 +1,4 @@
-.superpowers/
-target/
-docs/
-# Secret-bearing files and directories: never commit these by default.
+# Keep ripgrep aligned with the default secret-exclusion policy.
 .env
 .env.*
 *.env

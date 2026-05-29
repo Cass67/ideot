@@ -1,7 +1,4 @@
-.superpowers/
-target/
-docs/
-# Secret-bearing files and directories: never commit these by default.
+# Secret-bearing files and directories: exclude from default search/read flows.
 .env
 .env.*
 *.env

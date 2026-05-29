@@ -278,6 +278,20 @@ impl App {
         self.selected_file = self.selected_file.saturating_sub(1);
     }
 
+    pub fn focused_arrow_down(&mut self) {
+        match self.focus_pane {
+            FocusPane::Explorer => self.move_selection_down(),
+            FocusPane::Editor => self.scroll_editor_down(),
+        }
+    }
+
+    pub fn focused_arrow_up(&mut self) {
+        match self.focus_pane {
+            FocusPane::Explorer => self.move_selection_up(),
+            FocusPane::Editor => self.scroll_editor_up(),
+        }
+    }
+
     pub fn selected_file(&self) -> usize {
         self.selected_file
     }

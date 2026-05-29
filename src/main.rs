@@ -118,8 +118,8 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (_, KeyCode::PageUp) => {
                     app.page_editor_up(terminal.size()?.height.saturating_sub(4) as usize)
                 }
-                (_, KeyCode::Down) => app.move_selection_down(),
-                (_, KeyCode::Up) => app.move_selection_up(),
+                (_, KeyCode::Down) => app.focused_arrow_down(),
+                (_, KeyCode::Up) => app.focused_arrow_up(),
                 (_, KeyCode::Enter) | (_, KeyCode::Char(' ')) => {
                     let _ = app.activate_selected();
                 }

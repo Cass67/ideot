@@ -245,6 +245,28 @@ fn tab_toggles_focus_between_file_panel_and_editor_panel() {
 }
 
 #[test]
+fn arrow_scroll_respects_focused_pane() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("main.rs"), "fn main() {}\nline2\nline3").unwrap();
+
+    let mut app = App::new(dir.path().to_path_buf());
+    app.rebuild_index().unwrap();
+    app.open_relative("main.rs").unwrap();
+
+    assert_eq!(app.focus_pane(), FocusPane::Explorer);
+    app.focused_arrow_down();
+    assert_eq!(app.selected_file(), 0);
+    assert_eq!(app.editor_scroll(), 0);
+
+    app.toggle_focus_pane();
+    app.focused_arrow_down();
+    app.focused_arrow_down();
+    assert_eq!(app.editor_scroll(), 2);
+    app.focused_arrow_up();
+    assert_eq!(app.editor_scroll(), 1);
+}
+
+#[test]
 fn page_scroll_moves_explorer_and_editor_by_requested_amount() {
     let dir = tempdir().unwrap();
     std::fs::write(

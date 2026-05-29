@@ -233,6 +233,30 @@ fn mouse_activation_opens_tree_files_and_places_editor_cursor() {
 }
 
 #[test]
+fn page_scroll_moves_explorer_and_editor_by_requested_amount() {
+    let dir = tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("main.rs"),
+        "fn main() {}\nline2\nline3\nline4\nline5",
+    )
+    .unwrap();
+
+    let mut app = App::new(dir.path().to_path_buf());
+    app.rebuild_index().unwrap();
+    app.open_relative("main.rs").unwrap();
+
+    app.page_editor_down(3);
+    assert_eq!(app.editor_scroll(), 3);
+    app.page_editor_up(2);
+    assert_eq!(app.editor_scroll(), 1);
+
+    app.page_explorer_down(4);
+    assert_eq!(app.explorer_scroll(), 4);
+    app.page_explorer_up(3);
+    assert_eq!(app.explorer_scroll(), 1);
+}
+
+#[test]
 fn scroll_offsets_move_independently_for_explorer_and_editor() {
     let dir = tempdir().unwrap();
     std::fs::write(dir.path().join("main.rs"), "fn main() {}\nline2\nline3").unwrap();

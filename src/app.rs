@@ -420,12 +420,20 @@ impl App {
     }
 
     pub fn scroll_git_diff_down(&mut self) {
-        self.git.diff_scroll =
-            (self.git.diff_scroll + 1).min(self.git.diff_rows.len().saturating_sub(1));
+        self.page_git_diff_down(1);
     }
 
     pub fn scroll_git_diff_up(&mut self) {
-        self.git.diff_scroll = self.git.diff_scroll.saturating_sub(1);
+        self.page_git_diff_up(1);
+    }
+
+    pub fn page_git_diff_down(&mut self, amount: usize) {
+        self.git.diff_scroll =
+            (self.git.diff_scroll + amount).min(self.git.diff_rows.len().saturating_sub(1));
+    }
+
+    pub fn page_git_diff_up(&mut self, amount: usize) {
+        self.git.diff_scroll = self.git.diff_scroll.saturating_sub(amount);
     }
 
     pub fn click_git_diff_row(&mut self, visible_row: usize, before_side: bool) {
@@ -485,19 +493,35 @@ impl App {
     }
 
     pub fn scroll_explorer_down(&mut self) {
-        self.explorer_scroll += 1;
+        self.page_explorer_down(1);
     }
 
     pub fn scroll_explorer_up(&mut self) {
-        self.explorer_scroll = self.explorer_scroll.saturating_sub(1);
+        self.page_explorer_up(1);
+    }
+
+    pub fn page_explorer_down(&mut self, amount: usize) {
+        self.explorer_scroll += amount;
+    }
+
+    pub fn page_explorer_up(&mut self, amount: usize) {
+        self.explorer_scroll = self.explorer_scroll.saturating_sub(amount);
     }
 
     pub fn scroll_editor_down(&mut self) {
-        self.editor_scroll += 1;
+        self.page_editor_down(1);
     }
 
     pub fn scroll_editor_up(&mut self) {
-        self.editor_scroll = self.editor_scroll.saturating_sub(1);
+        self.page_editor_up(1);
+    }
+
+    pub fn page_editor_down(&mut self, amount: usize) {
+        self.editor_scroll += amount;
+    }
+
+    pub fn page_editor_up(&mut self, amount: usize) {
+        self.editor_scroll = self.editor_scroll.saturating_sub(amount);
     }
 }
 

@@ -69,10 +69,22 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     let _ = app.jump_to_mark(slot);
                 }
                 (_, KeyCode::Esc) if app.git_view().is_some() => app.git_back(),
+                (_, KeyCode::PageDown) if app.git_view() == Some(ideot::app::GitView::Diff) => {
+                    app.page_git_diff_down(terminal.size()?.height.saturating_sub(4) as usize)
+                }
+                (_, KeyCode::PageUp) if app.git_view() == Some(ideot::app::GitView::Diff) => {
+                    app.page_git_diff_up(terminal.size()?.height.saturating_sub(4) as usize)
+                }
                 (_, KeyCode::Down) if app.git_view().is_some() => app.git_move_down(),
                 (_, KeyCode::Up) if app.git_view().is_some() => app.git_move_up(),
                 (_, KeyCode::Enter) if app.git_view().is_some() => {
                     let _ = app.activate_git_selection();
+                }
+                (_, KeyCode::PageDown) if terminal.size()?.width > 0 => {
+                    app.page_editor_down(terminal.size()?.height.saturating_sub(4) as usize)
+                }
+                (_, KeyCode::PageUp) if terminal.size()?.width > 0 => {
+                    app.page_editor_up(terminal.size()?.height.saturating_sub(4) as usize)
                 }
                 (_, KeyCode::Down) => app.move_selection_down(),
                 (_, KeyCode::Up) => app.move_selection_up(),

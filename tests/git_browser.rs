@@ -47,12 +47,16 @@ fn git_diff_view_scrolls_and_clicks_before_after_panes() {
     assert_eq!(app.git_diff_scroll(), 2);
     app.scroll_git_diff_up();
     assert_eq!(app.git_diff_scroll(), 1);
+    app.page_git_diff_down(3);
+    assert_eq!(app.git_diff_scroll(), 4);
+    app.page_git_diff_up(2);
+    assert_eq!(app.git_diff_scroll(), 2);
 
     app.click_git_diff_row(0, true);
-    assert_eq!(app.git_diff_selected_row(), Some(1));
+    assert_eq!(app.git_diff_selected_row(), Some(2));
     assert_eq!(app.git_diff_selected_side(), Some(true));
     app.click_git_diff_row(2, false);
-    assert_eq!(app.git_diff_selected_row(), Some(3));
+    assert_eq!(app.git_diff_selected_row(), Some(4));
     assert_eq!(app.git_diff_selected_side(), Some(false));
 }
 

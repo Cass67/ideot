@@ -42,6 +42,22 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
                     let _ = app.save_current();
                 }
+                (KeyModifiers::CONTROL, KeyCode::Char('p')) => app.toggle_search(),
+                (KeyModifiers::CONTROL, KeyCode::Char('m')) => {
+                    let _ = app.mark_current_file();
+                }
+                (KeyModifiers::CONTROL, KeyCode::Char(ch)) if ('1'..='9').contains(&ch) => {
+                    let slot = ch.to_digit(10).unwrap() as usize;
+                    let _ = app.jump_to_mark(slot);
+                }
+                (_, KeyCode::Down) => app.move_selection_down(),
+                (_, KeyCode::Up) => app.move_selection_up(),
+                (_, KeyCode::Enter) => {
+                    let _ = app.open_selected();
+                }
+                (_, KeyCode::Backspace) if app.search_open() => app.pop_search_char(),
+                (_, KeyCode::Backspace) => app.backspace(),
+                (_, KeyCode::Char(ch)) if app.search_open() => app.push_search_char(ch),
                 (_, KeyCode::Char(ch)) => app.insert_char(ch),
                 _ => {}
             }

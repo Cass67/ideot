@@ -21,6 +21,9 @@ pub struct App {
     editor: Option<Editor>,
     current_relative: Option<String>,
     status: String,
+    selected_file: usize,
+    search_query: String,
+    search_open: bool,
 }
 
 impl App {
@@ -36,6 +39,9 @@ impl App {
             editor: None,
             current_relative: None,
             status: String::new(),
+            selected_file: 0,
+            search_query: String::new(),
+            search_open: false,
         }
     }
 
@@ -53,6 +59,8 @@ impl App {
         self.editor = Some(Editor::new(buffer));
         self.current_relative = Some(relative.to_string());
         self.recent.record(relative);
+        self.search_open = false;
+        self.search_query.clear();
         self.lsp_sink.send(DocumentEvent::Opened { path, text });
         Ok(())
     }
@@ -63,6 +71,15 @@ impl App {
             if let (Some(relative), Some(path)) = (self.current_relative.as_ref(), editor.buffer().path()) {
                 self.lsp_sink.send(DocumentEvent::Changed { path: path.to_path_buf(), text: editor.buffer().text() });
                 self.recent.record(relative.clone());
+            }
+        }
+    }
+
+    pub fn backspace(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.backspace();
+            if let Some(path) = editor.buffer().path() {
+                self.lsp_sink.send(DocumentEvent::Changed { path: path.to_path_buf(), text: editor.buffer().text() });
             }
         }
     }
@@ -91,5 +108,67 @@ impl App {
 
     pub fn marks(&self) -> &SessionMarks {
         &self.marks
+    }
+
+    pub fn move_selection_down(&mut self) {
+        let query = if self.search_open { self.search_query.as_str() } else { "" };
+        let max = self.search(query).len().saturating_sub(1);
+        self.selected_file = (self.selected_file + 1).min(max);
+    }
+
+    pub fn move_selection_up(&mut self) {
+        self.selected_file = self.selected_file.saturating_sub(1);
+    }
+
+    pub fn selected_file(&self) -> usize {
+        self.selected_file
+    }
+
+    pub fn open_selected(&mut self) -> Result<()> {
+        let query = if self.search_open { self.search_query.as_str() } else { "" };
+        let files = self.search(query);
+        if let Some(file) = files.get(self.selected_file) {
+            let relative = file.relative.clone();
+            self.open_relative(&relative)?;
+        }
+        Ok(())
+    }
+
+    pub fn toggle_search(&mut self) {
+        self.search_open = !self.search_open;
+        self.search_query.clear();
+        self.selected_file = 0;
+    }
+
+    pub fn search_open(&self) -> bool {
+        self.search_open
+    }
+
+    pub fn search_query(&self) -> &str {
+        &self.search_query
+    }
+
+    pub fn push_search_char(&mut self, ch: char) {
+        self.search_query.push(ch);
+        self.selected_file = 0;
+    }
+
+    pub fn pop_search_char(&mut self) {
+        self.search_query.pop();
+        self.selected_file = 0;
+    }
+
+    pub fn mark_current_file(&mut self) -> Option<usize> {
+        let relative = self.current_relative.clone()?;
+        let slot = self.marks.mark(relative);
+        self.status = format!("marked file in slot {slot}");
+        Some(slot)
+    }
+
+    pub fn jump_to_mark(&mut self, slot: usize) -> Result<()> {
+        if let Some(relative) = self.marks.get(slot).cloned() {
+            self.open_relative(&relative)?;
+        }
+        Ok(())
     }
 }

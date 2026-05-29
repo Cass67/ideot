@@ -1,4 +1,5 @@
 use ideot::buffer::{Buffer, Position};
+use ideot::editor::Editor;
 use tempfile::tempdir;
 
 #[test]
@@ -41,4 +42,24 @@ fn load_and_save_round_trip_file() {
 
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "one\ntwo!");
     assert!(!buffer.is_dirty());
+}
+
+#[test]
+fn editor_tracks_cursor_while_editing() {
+    let mut editor = Editor::new(Buffer::from_text("abc".to_string()));
+
+    editor.move_right();
+    editor.move_right();
+    editor.insert_char('X');
+    assert_eq!(editor.buffer().line(0), Some("abXc"));
+    assert_eq!(editor.cursor(), Position { line: 0, column: 3 });
+
+    editor.insert_newline();
+    assert_eq!(editor.buffer().line(0), Some("abX"));
+    assert_eq!(editor.buffer().line(1), Some("c"));
+    assert_eq!(editor.cursor(), Position { line: 1, column: 0 });
+
+    editor.backspace();
+    assert_eq!(editor.buffer().line(0), Some("abXc"));
+    assert_eq!(editor.cursor(), Position { line: 0, column: 3 });
 }

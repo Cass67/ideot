@@ -32,6 +32,7 @@ pub struct App {
     selected_file: usize,
     search_query: String,
     search_open: bool,
+    expanded_dirs: BTreeSet<String>,
     explorer_scroll: usize,
     editor_scroll: usize,
 }
@@ -52,6 +53,7 @@ impl App {
             selected_file: 0,
             search_query: String::new(),
             search_open: false,
+            expanded_dirs: BTreeSet::new(),
             explorer_scroll: 0,
             editor_scroll: 0,
         }
@@ -114,19 +116,46 @@ impl App {
     pub fn explorer_entries(&self) -> Vec<ExplorerEntry> {
         let Some(index) = &self.index else { return Vec::new(); };
         let mut dirs = BTreeSet::new();
-        let mut files = Vec::new();
+        let mut root_files = Vec::new();
         for file in index.files() {
-            if let Some((dir, _rest)) = file.relative.split_once('/') {
-                dirs.insert(dir.to_string());
+            let parts: Vec<&str> = file.relative.split('/').collect();
+            if parts.len() == 1 {
+                root_files.push(file.relative.clone());
             } else {
-                files.push(file.relative.clone());
+                for depth in 1..parts.len() {
+                    dirs.insert(parts[..depth].join("/"));
+                }
             }
         }
-        let mut entries: Vec<ExplorerEntry> = dirs
-            .into_iter()
-            .map(|dir| ExplorerEntry { label: format!("▸ {dir}"), relative: None, is_dir: true })
-            .collect();
-        entries.extend(files.into_iter().map(|file| ExplorerEntry { label: format!("  {file}"), relative: Some(file), is_dir: false }));
+
+        let mut entries = Vec::new();
+        for dir in dirs {
+            let parent_expanded = dir
+                .rsplit_once('/')
+                .map(|(parent, _)| self.expanded_dirs.contains(parent))
+                .unwrap_or(true);
+            if !parent_expanded {
+                continue;
+            }
+            let depth = dir.matches('/').count();
+            let marker = if self.expanded_dirs.contains(&dir) { '▾' } else { '▸' };
+            entries.push(ExplorerEntry {
+                label: format!("{}{marker} {dir}", "  ".repeat(depth)),
+                relative: None,
+                is_dir: true,
+            });
+            if self.expanded_dirs.contains(&dir) {
+                let file_indent = "  ".repeat(depth + 2);
+                for file in index.files().iter().filter(|file| direct_child_file(&file.relative, &dir)) {
+                    entries.push(ExplorerEntry {
+                        label: format!("{file_indent}{}", file.relative),
+                        relative: Some(file.relative.clone()),
+                        is_dir: false,
+                    });
+                }
+            }
+        }
+        entries.extend(root_files.into_iter().map(|file| ExplorerEntry { label: format!("  {file}"), relative: Some(file), is_dir: false }));
         entries
     }
 
@@ -147,8 +176,11 @@ impl App {
     }
 
     pub fn move_selection_down(&mut self) {
-        let query = if self.search_open { self.search_query.as_str() } else { "" };
-        let max = self.search(query).len().saturating_sub(1);
+        let max = if self.search_open {
+            self.search(self.search_query.as_str()).len().saturating_sub(1)
+        } else {
+            self.explorer_entries().len().saturating_sub(1)
+        };
         self.selected_file = (self.selected_file + 1).min(max);
     }
 
@@ -166,6 +198,24 @@ impl App {
         if let Some(file) = files.get(self.selected_file) {
             let relative = file.relative.clone();
             self.open_relative(&relative)?;
+        }
+        Ok(())
+    }
+
+    pub fn activate_selected(&mut self) -> Result<()> {
+        if self.search_open {
+            return self.open_selected();
+        }
+        let Some(entry) = self.explorer_entries().get(self.selected_file).cloned() else {
+            return Ok(());
+        };
+        if let Some(relative) = entry.relative {
+            self.open_relative(&relative)?;
+        } else if entry.is_dir {
+            let dir = entry.label.trim_start_matches([' ', '▸', '▾']).trim().to_string();
+            if !self.expanded_dirs.insert(dir.clone()) {
+                self.expanded_dirs.remove(&dir);
+            }
         }
         Ok(())
     }
@@ -231,4 +281,11 @@ impl App {
     pub fn scroll_editor_up(&mut self) {
         self.editor_scroll = self.editor_scroll.saturating_sub(1);
     }
+}
+
+fn direct_child_file(file: &str, dir: &str) -> bool {
+    let Some(rest) = file.strip_prefix(dir).and_then(|rest| rest.strip_prefix('/')) else {
+        return false;
+    };
+    !rest.contains('/')
 }

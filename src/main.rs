@@ -52,8 +52,8 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 }
                 (_, KeyCode::Down) => app.move_selection_down(),
                 (_, KeyCode::Up) => app.move_selection_up(),
-                (_, KeyCode::Enter) => {
-                    let _ = app.open_selected();
+                (_, KeyCode::Enter) | (_, KeyCode::Char(' ')) => {
+                    let _ = app.activate_selected();
                 }
                 (_, KeyCode::Backspace) if app.search_open() => app.pop_search_char(),
                 (_, KeyCode::Backspace) => app.backspace(),

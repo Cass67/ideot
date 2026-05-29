@@ -33,6 +33,28 @@ fn explorer_entries_default_to_collapsed_directories() {
 }
 
 #[test]
+fn toggling_selected_directory_expands_children_and_files_open() {
+    let dir = tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+    std::fs::write(dir.path().join("src/main.rs"), "fn main() {}").unwrap();
+    std::fs::write(dir.path().join("src/nested/lib.rs"), "").unwrap();
+    std::fs::write(dir.path().join("README.md"), "readme").unwrap();
+
+    let mut app = App::new(dir.path().to_path_buf());
+    app.rebuild_index().unwrap();
+
+    app.activate_selected().unwrap();
+    let labels: Vec<_> = app.explorer_entries().into_iter().map(|entry| entry.label).collect();
+    assert!(labels.contains(&"▾ src".to_string()));
+    assert!(labels.contains(&"    src/main.rs".to_string()));
+    assert!(labels.contains(&"  ▸ src/nested".to_string()));
+
+    app.move_selection_down();
+    app.activate_selected().unwrap();
+    assert_eq!(app.current_relative(), Some("src/main.rs"));
+}
+
+#[test]
 fn scroll_offsets_move_independently_for_explorer_and_editor() {
     let dir = tempdir().unwrap();
     std::fs::write(dir.path().join("main.rs"), "fn main() {}\nline2\nline3").unwrap();

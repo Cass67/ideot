@@ -1,4 +1,4 @@
-use ideot::app::{App, GitView};
+use ideot::app::{App, GitDiffLayout, GitView};
 use ideot::git::{align_lines, changed_files, recent_commits, DiffKind};
 use std::process::Command;
 use tempfile::tempdir;
@@ -58,6 +58,15 @@ fn git_diff_view_scrolls_and_clicks_before_after_panes() {
     app.click_git_diff_row(2, false);
     assert_eq!(app.git_diff_selected_row(), Some(4));
     assert_eq!(app.git_diff_selected_side(), Some(false));
+
+    assert_eq!(app.git_diff_layout(), GitDiffLayout::Unified);
+    let unified = app.git_unified_diff_rows();
+    assert!(unified.iter().any(|row| row.prefix == '-'));
+    assert!(unified.iter().any(|row| row.prefix == '+'));
+    app.toggle_git_diff_layout();
+    assert_eq!(app.git_diff_layout(), GitDiffLayout::Split);
+    app.toggle_git_diff_layout();
+    assert_eq!(app.git_diff_layout(), GitDiffLayout::Unified);
 }
 
 #[test]

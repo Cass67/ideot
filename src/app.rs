@@ -25,6 +25,21 @@ pub enum GitView {
     Diff,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GitDiffLayout {
+    #[default]
+    Split,
+    Unified,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnifiedDiffRow {
+    pub old_line: Option<usize>,
+    pub new_line: Option<usize>,
+    pub prefix: char,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct GitBrowserState {
     pub commits: Vec<GitCommit>,
@@ -36,6 +51,7 @@ pub struct GitBrowserState {
     pub diff_scroll: usize,
     pub diff_selected_row: Option<usize>,
     pub diff_selected_before: Option<bool>,
+    pub diff_layout: GitDiffLayout,
 }
 
 #[derive(Debug)]
@@ -355,6 +371,59 @@ impl App {
         self.git.diff_selected_before
     }
 
+    pub fn git_diff_layout(&self) -> GitDiffLayout {
+        self.git.diff_layout
+    }
+
+    pub fn toggle_git_diff_layout(&mut self) {
+        self.git.diff_layout = match self.git.diff_layout {
+            GitDiffLayout::Split => GitDiffLayout::Unified,
+            GitDiffLayout::Unified => GitDiffLayout::Split,
+        };
+    }
+
+    pub fn git_unified_diff_rows(&self) -> Vec<UnifiedDiffRow> {
+        let (mut old_line, mut new_line) = (1usize, 1usize);
+        let mut rows = Vec::new();
+        for row in &self.git.diff_rows {
+            match row.kind {
+                crate::git::DiffKind::Equal => {
+                    rows.push(UnifiedDiffRow {
+                        old_line: Some(old_line),
+                        new_line: Some(new_line),
+                        prefix: ' ',
+                        text: row
+                            .before
+                            .clone()
+                            .or_else(|| row.after.clone())
+                            .unwrap_or_default(),
+                    });
+                    old_line += 1;
+                    new_line += 1;
+                }
+                crate::git::DiffKind::Delete => {
+                    rows.push(UnifiedDiffRow {
+                        old_line: Some(old_line),
+                        new_line: None,
+                        prefix: '-',
+                        text: row.before.clone().unwrap_or_default(),
+                    });
+                    old_line += 1;
+                }
+                crate::git::DiffKind::Add => {
+                    rows.push(UnifiedDiffRow {
+                        old_line: None,
+                        new_line: Some(new_line),
+                        prefix: '+',
+                        text: row.after.clone().unwrap_or_default(),
+                    });
+                    new_line += 1;
+                }
+            }
+        }
+        rows
+    }
+
     pub fn git_selected_index(&self) -> usize {
         match self.git.view {
             Some(GitView::Commits) => self.git.selected_commit,
@@ -384,6 +453,7 @@ impl App {
                 self.git.diff_scroll = 0;
                 self.git.diff_selected_row = None;
                 self.git.diff_selected_before = None;
+                self.git.diff_layout = GitDiffLayout::Unified;
                 self.git.view = Some(GitView::Diff);
             }
             _ => {}

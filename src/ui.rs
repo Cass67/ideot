@@ -1,4 +1,4 @@
-use crate::app::{App, GitView};
+use crate::app::{App, GitDiffLayout, GitView};
 use crate::git::DiffKind;
 use crate::highlight::{Highlighter, SimpleTreeSitterHighlighter};
 use ratatui::{
@@ -86,7 +86,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(root[1]);
     let shortcuts = if app.git_view().is_some() {
-        "Git: Enter Select · Esc Back · Up/Down Move · F1 Help"
+        "Git: Enter Select · Esc Back · Up/Down/Page Move · Tab Diff View · F1 Help"
     } else {
         "Ctrl-P Search · Enter/Space Open/Expand · Ctrl-S Save · Ctrl-G Git · F1 Help · Ctrl-Q Quit"
     };
@@ -153,6 +153,13 @@ fn render_git_overlay(frame: &mut Frame, app: &App) {
 }
 
 fn render_git_diff(frame: &mut Frame, app: &App, area: Rect) {
+    match app.git_diff_layout() {
+        GitDiffLayout::Split => render_split_git_diff(frame, app, area),
+        GitDiffLayout::Unified => render_unified_git_diff(frame, app, area),
+    }
+}
+
+fn render_split_git_diff(frame: &mut Frame, app: &App, area: Rect) {
     let panes = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -209,6 +216,46 @@ fn render_git_diff(frame: &mut Frame, app: &App, area: Rect) {
                 .border_style(border),
         ),
         panes[1],
+    );
+}
+
+fn render_unified_git_diff(frame: &mut Frame, app: &App, area: Rect) {
+    frame.render_widget(Clear, area);
+    let height = area.height.saturating_sub(2) as usize;
+    let rows: Vec<Line> = app
+        .git_unified_diff_rows()
+        .into_iter()
+        .skip(app.git_diff_scroll())
+        .take(height)
+        .map(|row| {
+            let style = match row.prefix {
+                '-' => Style::default().fg(Color::Red),
+                '+' => Style::default().fg(Color::Green),
+                _ => Style::default().fg(Color::DarkGray),
+            };
+            let old = row
+                .old_line
+                .map(|line| line.to_string())
+                .unwrap_or_else(|| " ".to_string());
+            let new = row
+                .new_line
+                .map(|line| line.to_string())
+                .unwrap_or_else(|| " ".to_string());
+            Line::from(vec![
+                Span::styled(format!("{old:>4} "), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{new:>4} "), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{} {}", row.prefix, row.text), style),
+            ])
+        })
+        .collect();
+    frame.render_widget(
+        Paragraph::new(rows).block(
+            Block::default()
+                .title("unified diff")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Blue)),
+        ),
+        area,
     );
 }
 

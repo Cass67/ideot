@@ -69,6 +69,9 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     let _ = app.jump_to_mark(slot);
                 }
                 (_, KeyCode::Esc) if app.git_view().is_some() => app.git_back(),
+                (_, KeyCode::Tab) if app.git_view() == Some(ideot::app::GitView::Diff) => {
+                    app.toggle_git_diff_layout()
+                }
                 (_, KeyCode::PageDown) if app.git_view() == Some(ideot::app::GitView::Diff) => {
                     app.page_git_diff_down(terminal.size()?.height.saturating_sub(4) as usize)
                 }

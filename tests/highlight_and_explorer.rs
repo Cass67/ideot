@@ -1,17 +1,37 @@
 use ideot::app::App;
 use ideot::highlight::{Highlighter, SimpleTreeSitterHighlighter};
+use ideot::ui;
 use ratatui::style::Color;
 use tempfile::tempdir;
 
 #[test]
-fn rust_highlighter_styles_keywords_and_function_names() {
+fn rust_highlighter_styles_richer_rust_syntax() {
     let mut highlighter = SimpleTreeSitterHighlighter::default();
 
-    let spans = highlighter.highlight_line(Some("rs"), "fn main() { let x = 1; }");
+    let line = "pub struct App { name: String, count: usize }";
+    let spans = highlighter.highlight_line(Some("rs"), line);
 
-    assert!(spans.iter().any(|span| span.start == 0 && span.end == 2 && span.style.fg == Some(Color::Magenta)));
-    assert!(spans.iter().any(|span| span.start == 3 && span.end == 7 && span.style.fg == Some(Color::Cyan)));
-    assert!(spans.iter().any(|span| span.start == 12 && span.end == 15 && span.style.fg == Some(Color::Magenta)));
+    assert!(spans.iter().any(|span| &line[span.start..span.end] == "pub" && span.style.fg == Some(Color::Magenta)));
+    assert!(spans.iter().any(|span| &line[span.start..span.end] == "struct" && span.style.fg == Some(Color::Magenta)));
+    assert!(spans.iter().any(|span| &line[span.start..span.end] == "App" && span.style.fg == Some(Color::Blue)));
+    assert!(spans.iter().any(|span| &line[span.start..span.end] == "String" && span.style.fg == Some(Color::Blue)));
+    assert!(spans.iter().any(|span| &line[span.start..span.end] == "usize" && span.style.fg == Some(Color::Blue)));
+}
+
+#[test]
+fn editor_highlighting_is_limited_to_visible_viewport() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("main.rs");
+    let text = (0..100).map(|i| format!("fn line_{i}() {{}}" )).collect::<Vec<_>>().join("\n");
+    std::fs::write(&path, text).unwrap();
+
+    let mut app = App::new(dir.path().to_path_buf());
+    app.rebuild_index().unwrap();
+    app.open_relative("main.rs").unwrap();
+
+    let lines = ui::highlighted_editor_lines_for_height(&app, 12);
+
+    assert_eq!(lines.len(), 12);
 }
 
 #[test]

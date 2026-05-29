@@ -56,6 +56,10 @@ impl Buffer {
         self.lines.get(index).map(String::as_str)
     }
 
+    pub fn lines(&self) -> &[String] {
+        &self.lines
+    }
+
     pub fn text(&self) -> String {
         self.lines.join("\n")
     }

@@ -41,7 +41,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     };
     frame.render_widget(List::new(files).block(Block::default().title("files").borders(Borders::ALL)), panes[0]);
 
-    let editor_lines = highlighted_editor_lines(app);
+    let editor_lines = highlighted_editor_lines_for_height(app, panes[1].height.saturating_sub(2) as usize);
     frame.render_widget(Paragraph::new(editor_lines).block(Block::default().title("editor").borders(Borders::ALL)), panes[1]);
 
     if app.search_open() {
@@ -54,16 +54,17 @@ pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(status.to_string()), root[1]);
 }
 
-fn highlighted_editor_lines(app: &App) -> Vec<Line<'static>> {
+pub fn highlighted_editor_lines_for_height(app: &App, height: usize) -> Vec<Line<'static>> {
     let Some(editor) = app.editor() else {
         return vec![Line::from("Open a file with Ctrl-P or select from explorer")];
     };
     let mut highlighter = SimpleTreeSitterHighlighter::default();
     editor
         .buffer()
-        .text()
         .lines()
+        .iter()
         .skip(app.editor_scroll())
+        .take(height)
         .map(|line| highlighted_line(&mut highlighter, app.language_hint(), line))
         .collect()
 }
@@ -77,13 +78,14 @@ fn highlighted_line(highlighter: &mut dyn Highlighter, language_hint: Option<&st
     let mut rendered = Vec::new();
     let mut cursor = 0;
     for span in spans {
+        if span.start < cursor || span.end > line.len() || span.start >= span.end {
+            continue;
+        }
         if span.start > cursor {
             rendered.push(Span::raw(line[cursor..span.start].to_string()));
         }
-        if span.end <= line.len() && span.start < span.end {
-            rendered.push(Span::styled(line[span.start..span.end].to_string(), span.style));
-            cursor = span.end;
-        }
+        rendered.push(Span::styled(line[span.start..span.end].to_string(), span.style));
+        cursor = span.end;
     }
     if cursor < line.len() {
         rendered.push(Span::raw(line[cursor..].to_string()));

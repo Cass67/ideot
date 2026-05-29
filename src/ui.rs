@@ -58,6 +58,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         Paragraph::new(editor_lines).block(Block::default().title("editor").borders(Borders::ALL)),
         panes[1],
     );
+    if let Some((x, y)) = editor_cursor_screen_position(app, panes[1]) {
+        frame.set_cursor_position((x, y));
+    }
 
     if app.search_open() {
         let area = centered_rect(60, 20, frame.area());
@@ -70,6 +73,20 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let status = app.current_relative().unwrap_or("no file");
     frame.render_widget(Paragraph::new(status.to_string()), root[1]);
+}
+
+pub fn editor_cursor_screen_position(app: &App, editor_area: Rect) -> Option<(u16, u16)> {
+    let cursor = app.editor()?.cursor();
+    let visible_line = cursor.line.checked_sub(app.editor_scroll())?;
+    let inner_x = editor_area.x.saturating_add(1);
+    let inner_y = editor_area.y.saturating_add(1);
+    let inner_height = editor_area.height.saturating_sub(2) as usize;
+    let inner_width = editor_area.width.saturating_sub(2) as usize;
+    if visible_line >= inner_height {
+        return None;
+    }
+    let column = cursor.column.min(inner_width.saturating_sub(1));
+    Some((inner_x + column as u16, inner_y + visible_line as u16))
 }
 
 pub fn highlighted_editor_lines_for_height(app: &App, height: usize) -> Vec<Line<'static>> {

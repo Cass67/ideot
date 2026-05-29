@@ -1,7 +1,7 @@
 use ideot::app::App;
 use ideot::highlight::{Highlighter, SimpleTreeSitterHighlighter};
 use ideot::ui;
-use ratatui::style::Color;
+use ratatui::{layout::Rect, style::Color};
 use tempfile::tempdir;
 
 #[test]
@@ -181,6 +181,20 @@ fn toggling_selected_directory_expands_children_and_files_open() {
     app.move_selection_down();
     app.activate_selected().unwrap();
     assert_eq!(app.current_relative(), Some("src/main.rs"));
+}
+
+#[test]
+fn editor_cursor_maps_to_screen_position_when_visible() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("main.rs"), "abc\ndef").unwrap();
+
+    let mut app = App::new(dir.path().to_path_buf());
+    app.rebuild_index().unwrap();
+    app.open_relative("main.rs").unwrap();
+    app.place_editor_cursor(1, 2);
+
+    let area = Rect::new(30, 0, 70, 20);
+    assert_eq!(ui::editor_cursor_screen_position(&app, area), Some((33, 2)));
 }
 
 #[test]

@@ -1,6 +1,7 @@
 .superpowers/
 target/
 docs/
+!docs/superpowers/
 # Secret-bearing files and directories: never commit these by default.
 .env
 .env.*

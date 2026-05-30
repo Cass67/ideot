@@ -4,7 +4,7 @@ use crate::buffer::{Buffer, Position};
 use crate::editor::Editor;
 use crate::fs::{ProjectFile, ProjectIndex};
 use crate::git::{self, DiffRow, GitCommit};
-use crate::lsp::{DocumentEvent, DocumentEventSink, NullDocumentEventSink};
+use crate::lsp::{CompletionItem, DiagnosticsStore, HoverInfo, LspClient, LspMsg};
 use crate::marks::SessionMarks;
 use crate::search::{RecentFiles, SearchIndex};
 use anyhow::{bail, Context, Result};
@@ -76,7 +76,10 @@ pub struct GitBrowserState {
 pub struct App {
     pub root: PathBuf,
     pub should_quit: bool,
-    pub lsp_sink: NullDocumentEventSink,
+    pub lsp: Option<LspClient>,
+    pub diagnostics: DiagnosticsStore,
+    pub hover_popup: Option<HoverInfo>,
+    pub completion_popup: Option<Vec<CompletionItem>>,
     index: Option<ProjectIndex>,
     search_index: SearchIndex,
     recent: RecentFiles,
@@ -101,7 +104,10 @@ impl App {
         Self {
             root,
             should_quit: false,
-            lsp_sink: NullDocumentEventSink,
+            lsp: None,
+            diagnostics: DiagnosticsStore::new(),
+            hover_popup: None,
+            completion_popup: None,
             index: None,
             search_index: SearchIndex::new(Vec::new()),
             recent: RecentFiles::default(),
@@ -139,8 +145,61 @@ impl App {
         self.search_open = false;
         self.search_query.clear();
         self.editor_scroll = 0;
-        self.lsp_sink.send(DocumentEvent::Opened { path, text });
+        self.lsp_did_open(&path, &text);
+
+        // Spawn LSP client if not already initialized
+        if self.lsp.is_none() {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if let Some(lsp) = LspClient::init(ext, &self.root) {
+                self.lsp = Some(lsp);
+                self.lsp_did_open(&path, &text);
+            }
+        }
         Ok(())
+    }
+
+    pub fn lsp_hover(&self, path: &std::path::Path, pos: Position) {
+        if let Some(lsp) = &self.lsp {
+            lsp.hover(
+                &self.lsp_uri(path),
+                super::lsp::Position {
+                    line: pos.line as u32,
+                    character: pos.column as u32,
+                },
+            );
+        }
+    }
+
+    pub fn lsp_completion(&self, path: &std::path::Path, pos: Position) {
+        if let Some(lsp) = &self.lsp {
+            lsp.completion(
+                &self.lsp_uri(path),
+                super::lsp::Position {
+                    line: pos.line as u32,
+                    character: pos.column as u32,
+                },
+            );
+        }
+    }
+
+    pub fn lsp_definition(&self, path: &std::path::Path, pos: Position) {
+        if let Some(lsp) = &self.lsp {
+            lsp.definition(
+                &self.lsp_uri(path),
+                super::lsp::Position {
+                    line: pos.line as u32,
+                    character: pos.column as u32,
+                },
+            );
+        }
+    }
+
+    fn lsp_did_open(&self, path: &std::path::Path, text: &str) {
+        if let Some(lsp) = &self.lsp {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let lang = ext.trim_start_matches('.');
+            lsp.did_open(&self.lsp_uri(path), text, lang);
+        }
     }
 
     pub fn insert_char(&mut self, ch: char) {
@@ -149,10 +208,9 @@ impl App {
             if let (Some(relative), Some(path)) =
                 (self.current_relative.as_ref(), editor.buffer().path())
             {
-                self.lsp_sink.send(DocumentEvent::Changed {
-                    path: path.to_path_buf(),
-                    text: editor.buffer().text(),
-                });
+                let path = path.to_path_buf();
+                let text = editor.buffer().text().to_string();
+                self.lsp_change(&path, text);
                 self.recent.record(relative.clone());
             }
         }
@@ -162,10 +220,9 @@ impl App {
         if let Some(editor) = &mut self.editor {
             editor.backspace();
             if let Some(path) = editor.buffer().path() {
-                self.lsp_sink.send(DocumentEvent::Changed {
-                    path: path.to_path_buf(),
-                    text: editor.buffer().text(),
-                });
+                let path = path.to_path_buf();
+                let text = editor.buffer().text().to_string();
+                self.lsp_change(&path, text);
             }
         }
     }
@@ -174,13 +231,43 @@ impl App {
         let editor = self.editor.as_mut().context("no open file")?;
         editor.buffer_mut().save()?;
         if let Some(path) = editor.buffer().path() {
-            self.lsp_sink.send(DocumentEvent::Saved {
-                path: path.to_path_buf(),
-                text: editor.buffer().text(),
-            });
+            let path = path.to_path_buf();
+            let text = editor.buffer().text().to_string();
+            self.lsp_save(&path, text);
         }
         self.status = "saved".to_string();
         Ok(())
+    }
+
+    fn lsp_uri(&self, path: &std::path::Path) -> String {
+        format!("file://{}", path.display())
+    }
+
+    fn lsp_change(&self, path: &std::path::Path, text: String) {
+        if let Some(lsp) = &self.lsp {
+            lsp.did_change(&self.lsp_uri(path), &text);
+        }
+    }
+
+    fn lsp_save(&self, path: &std::path::Path, text: String) {
+        if let Some(lsp) = &self.lsp {
+            lsp.did_save(&self.lsp_uri(path), &text);
+        }
+    }
+
+    pub fn poll_lsp(&mut self) {
+        if let Some(lsp) = &self.lsp {
+            while let Some(msg) = lsp.poll() {
+                match msg {
+                    LspMsg::Diagnostics { uri, diagnostics } => {
+                        self.diagnostics.update(uri, diagnostics);
+                    }
+                    LspMsg::Hover(h) => self.hover_popup = h,
+                    LspMsg::Completion(c) => self.completion_popup = c,
+                    LspMsg::Definition(_) => {}
+                }
+            }
+        }
     }
 
     pub fn search(&self, query: &str) -> Vec<ProjectFile> {

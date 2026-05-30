@@ -120,12 +120,39 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 }
                 (_, KeyCode::Down) => app.focused_arrow_down(),
                 (_, KeyCode::Up) => app.focused_arrow_up(),
-                (_, KeyCode::Enter) | (_, KeyCode::Char(' ')) => {
+                (_, KeyCode::Enter) => {
+                    let _ = app.activate_selected();
+                }
+                (_, KeyCode::Char(' ')) if app.focus_pane() == FocusPane::Explorer => {
                     let _ = app.activate_selected();
                 }
                 (_, KeyCode::Backspace) if app.search_open() => app.pop_search_char(),
                 (_, KeyCode::Backspace) => app.backspace(),
                 (_, KeyCode::Char(ch)) if app.search_open() => app.push_search_char(ch),
+                (KeyModifiers::CONTROL, KeyCode::Char('h')) => {
+                    if let Some(editor) = app.editor() {
+                        if let Some(path) = editor.buffer().path() {
+                            let pos = editor.cursor();
+                            app.lsp_hover(path, pos);
+                        }
+                    }
+                }
+                (KeyModifiers::CONTROL, KeyCode::Char('/')) => {
+                    if let Some(editor) = app.editor() {
+                        if let Some(path) = editor.buffer().path() {
+                            let pos = editor.cursor();
+                            app.lsp_completion(path, pos);
+                        }
+                    }
+                }
+                (KeyModifiers::CONTROL, KeyCode::Char(']')) => {
+                    if let Some(editor) = app.editor() {
+                        if let Some(path) = editor.buffer().path() {
+                            let pos = editor.cursor();
+                            app.lsp_definition(path, pos);
+                        }
+                    }
+                }
                 (_, KeyCode::Char(ch)) => app.insert_char(ch),
                 _ => {}
             },
@@ -179,6 +206,9 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
             }
             _ => {}
         }
+
+        // Poll LSP messages (non-blocking)
+        app.poll_lsp();
     }
     Ok(())
 }

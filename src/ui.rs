@@ -328,7 +328,7 @@ fn render_help_overlay(frame: &mut Frame) {
         Line::from("  Ctrl-M       Mark current file"),
         Line::from("  Ctrl-1..9    Jump to mark"),
         Line::from("  Ctrl-G       Git commit browser"),
-        Line::from("  F1           Toggle this help"),
+        Line::from("  F1/Esc       Toggle this help"),
         Line::from("  Ctrl-Q       Quit"),
         Line::from(""),
         Line::from("Mouse"),

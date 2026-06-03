@@ -27,6 +27,8 @@ pub struct EditorViewport {
     pub scroll: usize,
 }
 
+const EDITOR_DIAGNOSTIC_GUTTER_WIDTH: u16 = 9;
+
 impl EditorViewport {
     pub fn contains(&self, column: u16, row: u16) -> bool {
         column >= self.x
@@ -41,13 +43,49 @@ impl EditorViewport {
         row: u16,
         visible_lines: &[String],
     ) -> Option<Position> {
+        self.position_for_cell_with_offset(column, row, visible_lines, 0)
+    }
+
+    pub fn position_for_rendered_editor_cell(
+        &self,
+        column: u16,
+        row: u16,
+        visible_lines: &[String],
+    ) -> Option<Position> {
+        self.position_for_rendered_editor_cell_with_gutter(
+            column,
+            row,
+            visible_lines,
+            EDITOR_DIAGNOSTIC_GUTTER_WIDTH,
+        )
+    }
+
+    pub fn position_for_rendered_editor_cell_with_gutter(
+        &self,
+        column: u16,
+        row: u16,
+        visible_lines: &[String],
+        gutter_width: u16,
+    ) -> Option<Position> {
+        self.position_for_cell_with_offset(column, row, visible_lines, gutter_width)
+    }
+
+    fn position_for_cell_with_offset(
+        &self,
+        column: u16,
+        row: u16,
+        visible_lines: &[String],
+        rendered_prefix_width: u16,
+    ) -> Option<Position> {
         if !self.contains(column, row) {
             return None;
         }
         let visible_row = row.saturating_sub(self.y) as usize;
         let line = self.scroll + visible_row;
         let line_text = visible_lines.get(visible_row)?;
-        let display_column = column.saturating_sub(self.x) as usize;
+        let display_column = column
+            .saturating_sub(self.x)
+            .saturating_sub(rendered_prefix_width) as usize;
         let byte_column = line_text
             .char_indices()
             .nth(display_column)
@@ -81,7 +119,29 @@ impl MouseInputController {
         viewport: &EditorViewport,
         visible_lines: &[String],
     ) -> Option<MouseAction> {
-        let position = viewport.position_for_cell(column, row, visible_lines)?;
+        self.left_down_with_gutter(
+            column,
+            row,
+            viewport,
+            visible_lines,
+            EDITOR_DIAGNOSTIC_GUTTER_WIDTH,
+        )
+    }
+
+    pub fn left_down_with_gutter(
+        &mut self,
+        column: u16,
+        row: u16,
+        viewport: &EditorViewport,
+        visible_lines: &[String],
+        gutter_width: u16,
+    ) -> Option<MouseAction> {
+        let position = viewport.position_for_rendered_editor_cell_with_gutter(
+            column,
+            row,
+            visible_lines,
+            gutter_width,
+        )?;
         self.anchor = Some(position);
         self.dragging = false;
         Some(MouseAction::MoveCursor(position))
@@ -94,8 +154,30 @@ impl MouseInputController {
         viewport: &EditorViewport,
         visible_lines: &[String],
     ) -> Option<MouseAction> {
+        self.drag_with_gutter(
+            column,
+            row,
+            viewport,
+            visible_lines,
+            EDITOR_DIAGNOSTIC_GUTTER_WIDTH,
+        )
+    }
+
+    pub fn drag_with_gutter(
+        &mut self,
+        column: u16,
+        row: u16,
+        viewport: &EditorViewport,
+        visible_lines: &[String],
+        gutter_width: u16,
+    ) -> Option<MouseAction> {
         let anchor = self.anchor?;
-        let end = viewport.position_for_cell(column, row, visible_lines)?;
+        let end = viewport.position_for_rendered_editor_cell_with_gutter(
+            column,
+            row,
+            visible_lines,
+            gutter_width,
+        )?;
         self.dragging = true;
         Some(MouseAction::UpdateSelection { anchor, end })
     }

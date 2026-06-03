@@ -206,7 +206,7 @@ fn editor_cursor_maps_to_screen_position_when_visible() {
     app.place_editor_cursor(1, 2);
 
     let area = Rect::new(30, 0, 70, 20);
-    assert_eq!(ui::editor_cursor_screen_position(&app, area), Some((33, 2)));
+    assert_eq!(ui::editor_cursor_screen_position(&app, area), Some((42, 2)));
 }
 
 #[test]

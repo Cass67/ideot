@@ -24,6 +24,19 @@ fn fuzzy_search_returns_matching_files() {
 }
 
 #[test]
+fn fuzzy_search_matches_extensions_and_dotted_names() {
+    let files = vec![file("src/app.rs"), file("src/ui.rs"), file("README.md")];
+    let search = SearchIndex::new(files);
+
+    let dotted = search.query("app.rs", &RecentFiles::default());
+    let extension = search.query("rs", &RecentFiles::default());
+
+    assert_eq!(dotted[0].relative, "src/app.rs");
+    assert!(extension.iter().any(|file| file.relative == "src/app.rs"));
+    assert!(extension.iter().any(|file| file.relative == "src/ui.rs"));
+}
+
+#[test]
 fn recent_files_are_boosted_when_scores_are_close() {
     let files = vec![file("src/app.rs"), file("examples/app.rs")];
     let search = SearchIndex::new(files);

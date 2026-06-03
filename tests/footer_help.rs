@@ -16,10 +16,15 @@ fn help_page_contains_full_command_reference() {
     assert!(help.contains("U            Undo"));
     assert!(help.contains("Ctrl-R       Redo"));
     assert!(help.contains("Ctrl-P       Search files"));
+    assert!(help.contains("Ctrl-B       Toggle file pane on/off (remembered)"));
+    assert!(help.contains("Ctrl-T       Toggle line numbers on/off (remembered)"));
     assert!(help.contains("Ctrl-G       Git commit browser"));
+    assert!(help.contains("Ctrl-L       Toggle LSP on/off (remembered)"));
+    assert!(help.contains("Ctrl-O       Toggle LSP hover on/off (remembered)"));
     assert!(help.contains("Ctrl-H       LSP hover"));
     assert!(help.contains("Ctrl-/       LSP completion"));
     assert!(help.contains("Ctrl-]       LSP go to definition"));
+    assert!(help.contains("Hover editor text LSP hover"));
     assert!(help.contains("Drag editor text  Select text in ideot"));
     assert!(help.contains("Help is modal; press F1 or Esc to return to the editor"));
 }

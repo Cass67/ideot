@@ -12,11 +12,26 @@ pub struct LanguageServer {
 /// Returns `None` if no server is configured for the extension,
 /// or if the server binary is not found on PATH.
 pub fn discover_server(extension: &str) -> Option<LanguageServer> {
-    let config = SERVER_MAP.get(extension)?;
+    let config = configured_server(extension)?;
     if !command_exists(config.command) {
         return None;
     }
     Some(config.clone())
+}
+
+pub fn configured_server_command(extension: &str) -> Option<&'static str> {
+    configured_server(extension).map(|server| server.command)
+}
+
+fn configured_server(extension: &str) -> Option<&'static LanguageServer> {
+    let dotted;
+    let key = if extension.starts_with('.') {
+        extension
+    } else {
+        dotted = format!(".{extension}");
+        dotted.as_str()
+    };
+    SERVER_MAP.get(key)
 }
 
 /// Check if a command exists on PATH.
@@ -115,5 +130,10 @@ mod tests {
         // .rs always maps; whether it's found depends on PATH
         let config = SERVER_MAP.get(".rs").expect(".rs should be in map");
         assert_eq!(config.command, "rust-analyzer");
+    }
+
+    #[test]
+    fn extension_lookup_accepts_dotless_extension() {
+        assert_eq!(configured_server_command("rs"), Some("rust-analyzer"));
     }
 }

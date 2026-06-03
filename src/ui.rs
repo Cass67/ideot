@@ -4,7 +4,7 @@ use crate::highlight::{Highlighter, SimpleTreeSitterHighlighter};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -12,56 +12,62 @@ pub fn render(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(2)])
         .split(frame.area());
-    let panes = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-        .split(root[0]);
+    let panes = if app.file_pane_visible() {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+            .split(root[0])
+    } else {
+        vec![Rect::default(), root[0]].into()
+    };
 
-    let files: Vec<ListItem> = if app.search_open() {
-        app.search(app.search_query())
-            .into_iter()
-            .enumerate()
-            .skip(app.explorer_scroll())
-            .take(200)
-            .map(|(index, file)| {
-                let prefix = if index == app.selected_file() {
-                    "> "
-                } else {
-                    "  "
-                };
-                ListItem::new(format!("{prefix}{}", file.relative))
-            })
-            .collect()
-    } else {
-        app.explorer_entries()
-            .into_iter()
-            .enumerate()
-            .skip(app.explorer_scroll())
-            .take(200)
-            .map(|(index, entry)| {
-                let prefix = if index == app.selected_file() {
-                    "> "
-                } else {
-                    "  "
-                };
-                ListItem::new(format!("{prefix}{}", entry.label))
-            })
-            .collect()
-    };
-    let file_border = if app.focus_pane() == FocusPane::Explorer {
-        Color::Blue
-    } else {
-        Color::White
-    };
-    frame.render_widget(
-        List::new(files).block(
-            Block::default()
-                .title("files")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(file_border)),
-        ),
-        panes[0],
-    );
+    if app.file_pane_visible() {
+        let files: Vec<ListItem> = if app.search_open() {
+            app.search(app.search_query())
+                .into_iter()
+                .enumerate()
+                .skip(app.explorer_scroll())
+                .take(200)
+                .map(|(index, file)| {
+                    let prefix = if index == app.selected_file() {
+                        "> "
+                    } else {
+                        "  "
+                    };
+                    ListItem::new(format!("{prefix}{}", file.relative))
+                })
+                .collect()
+        } else {
+            app.explorer_entries()
+                .into_iter()
+                .enumerate()
+                .skip(app.explorer_scroll())
+                .take(200)
+                .map(|(index, entry)| {
+                    let prefix = if index == app.selected_file() {
+                        "> "
+                    } else {
+                        "  "
+                    };
+                    ListItem::new(format!("{prefix}{}", entry.label))
+                })
+                .collect()
+        };
+        let file_border = if app.focus_pane() == FocusPane::Explorer {
+            Color::Blue
+        } else {
+            Color::White
+        };
+        frame.render_widget(
+            List::new(files).block(
+                Block::default()
+                    .title("files")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(file_border)),
+            ),
+            panes[0],
+        );
+    }
 
     let editor_lines =
         highlighted_editor_lines_for_height(app, panes[1].height.saturating_sub(2) as usize);
@@ -84,11 +90,28 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     if app.search_open() {
-        let area = centered_rect(60, 20, frame.area());
-        let text = format!("Find file: {}", app.search_query());
+        let area = centered_rect(70, 45, frame.area());
         frame.render_widget(Clear, area);
+        let results: Vec<ListItem> = app
+            .search(app.search_query())
+            .into_iter()
+            .enumerate()
+            .take(area.height.saturating_sub(3) as usize)
+            .map(|(index, file)| {
+                let prefix = if index == app.selected_file() {
+                    "> "
+                } else {
+                    "  "
+                };
+                ListItem::new(format!("{prefix}{}", file.relative))
+            })
+            .collect();
         frame.render_widget(
-            Paragraph::new(text).block(Block::default().title("search").borders(Borders::ALL)),
+            List::new(results).block(
+                Block::default()
+                    .title(format!("Find file: {} · Esc close", app.search_query()))
+                    .borders(Borders::ALL),
+            ),
             area,
         );
     }
@@ -101,8 +124,12 @@ pub fn render(frame: &mut Frame, app: &App) {
         render_git_overlay(frame, app);
     }
 
+    if app.hover_popup.is_some() && !app.help_open() {
+        render_hover_popup(frame, app);
+    }
+
     if app.help_open() {
-        render_help_overlay(frame);
+        render_help_overlay(frame, app);
     }
 
     let footer = Layout::default()
@@ -113,8 +140,51 @@ pub fn render(frame: &mut Frame, app: &App) {
         Paragraph::new(footer_shortcuts(app.git_view().is_some())),
         footer[0],
     );
-    let status = app.current_relative().unwrap_or("no file");
-    frame.render_widget(Paragraph::new(status.to_string()), footer[1]);
+    frame.render_widget(Paragraph::new(app.status_line()), footer[1]);
+}
+
+fn render_hover_popup(frame: &mut Frame, app: &App) {
+    let Some(hover) = &app.hover_popup else {
+        return;
+    };
+    let area = hover_popup_area(frame.area());
+    frame.render_widget(Clear, area);
+    let text = hover
+        .contents
+        .lines()
+        .skip(app.hover_scroll)
+        .collect::<Vec<_>>()
+        .join("\n");
+    frame.render_widget(
+        Paragraph::new(text).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .title("hover · wheel/↑↓ scroll · Esc close")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Blue)),
+        ),
+        area,
+    );
+}
+
+pub fn hover_popup_area(area: Rect) -> Rect {
+    centered_rect(80, 70, area)
+}
+
+pub fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
+    column >= area.x
+        && column < area.x.saturating_add(area.width)
+        && row >= area.y
+        && row < area.y.saturating_add(area.height)
+}
+
+pub fn hover_popup_mouse_region(area: Rect) -> Rect {
+    let popup = hover_popup_area(area);
+    Rect::new(
+        popup.x.saturating_sub(2),
+        popup.y.saturating_sub(2),
+        popup.width.saturating_add(4),
+        popup.height.saturating_add(4),
+    )
 }
 
 fn render_file_prompt(frame: &mut Frame, app: &App) {
@@ -344,6 +414,8 @@ pub fn help_text_lines() -> Vec<&'static str> {
         "",
         "Project",
         "  Ctrl-P       Search files",
+        "  Ctrl-B       Toggle file pane on/off (remembered)",
+        "  Ctrl-T       Toggle line numbers on/off (remembered)",
         "  Ctrl-N       New file",
         "  Ctrl-D       Delete file",
         "  Ctrl-M       Mark current file",
@@ -356,6 +428,8 @@ pub fn help_text_lines() -> Vec<&'static str> {
         "  Esc          Back/close git browser",
         "",
         "LSP",
+        "  Ctrl-L       Toggle LSP on/off (remembered)",
+        "  Ctrl-O       Toggle LSP hover on/off (remembered)",
         "  Ctrl-H       LSP hover",
         "  Ctrl-/       LSP completion",
         "  Ctrl-]       LSP go to definition",
@@ -363,6 +437,7 @@ pub fn help_text_lines() -> Vec<&'static str> {
         "Mouse",
         "  Click tree row     Open file or toggle folder",
         "  Click editor pane  Move cursor",
+        "  Hover editor text LSP hover",
         "  Drag editor text  Select text in ideot",
         "  Modifier-drag     Terminal-native selection escape hatch",
         "  Wheel              Scroll hovered pane",
@@ -372,12 +447,20 @@ pub fn help_text_lines() -> Vec<&'static str> {
     ]
 }
 
-fn render_help_overlay(frame: &mut Frame) {
+fn render_help_overlay(frame: &mut Frame, app: &App) {
     let area = centered_rect(70, 70, frame.area());
-    let help: Vec<Line> = help_text_lines().into_iter().map(Line::from).collect();
+    let help: Vec<Line> = help_text_lines()
+        .into_iter()
+        .skip(app.help_scroll())
+        .map(Line::from)
+        .collect();
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(help).block(Block::default().title("help").borders(Borders::ALL)),
+        Paragraph::new(help).block(
+            Block::default()
+                .title("help · F1/Esc close · ↑↓ scroll")
+                .borders(Borders::ALL),
+        ),
         area,
     );
 }
@@ -392,8 +475,13 @@ pub fn editor_cursor_screen_position(app: &App, editor_area: Rect) -> Option<(u1
     if visible_line >= inner_height {
         return None;
     }
-    let column = cursor.column.min(inner_width.saturating_sub(1));
-    Some((inner_x + column as u16, inner_y + visible_line as u16))
+    let gutter_width = app.editor_gutter_width() as usize;
+    let text_width = inner_width.saturating_sub(gutter_width);
+    let column = cursor.column.min(text_width.saturating_sub(1));
+    Some((
+        inner_x + gutter_width as u16 + column as u16,
+        inner_y + visible_line as u16,
+    ))
 }
 
 pub fn highlighted_editor_lines_for_height(app: &App, height: usize) -> Vec<Line<'static>> {
@@ -414,14 +502,22 @@ pub fn highlighted_editor_lines_for_height(app: &App, height: usize) -> Vec<Line
         .take(height)
         .map(|(line_idx, line)| {
             let visible_line = line_idx - scroll;
-            highlighted_line_with_selection(
+            let mut rendered = highlighted_line_with_selection(
                 &mut highlighter,
                 app.language_hint(),
                 line,
                 line_idx,
                 visible_line,
                 selection,
-            )
+            );
+            let marker = app.diagnostic_marker_for_line(line_idx);
+            let prefix = if app.line_numbers_visible() {
+                format!("{marker}{:>5} │ ", line_idx + 1)
+            } else {
+                format!("{marker} ")
+            };
+            rendered.spans.insert(0, Span::raw(prefix));
+            rendered
         })
         .collect()
 }

@@ -7,5 +7,7 @@ pub mod highlight;
 pub mod input;
 pub mod lsp;
 pub mod marks;
+pub mod runtime;
 pub mod search;
+pub mod settings;
 pub mod ui;

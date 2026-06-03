@@ -14,14 +14,20 @@ use ideot::{
         help_modal_key_action, help_modal_mouse_action, EditorViewport, HelpModalAction,
         MouseAction, MouseInputController,
     },
+    runtime::{RenderScheduler, TickAction},
+    settings::Settings,
     ui,
 };
 use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
-use std::{io, time::Duration};
+use std::{
+    io,
+    time::{Duration, Instant},
+};
 
 fn main() -> Result<()> {
     let root = std::env::current_dir()?;
-    let mut app = App::new(root);
+    let settings = Settings::load()?;
+    let mut app = App::new_with_settings(root, settings);
     app.rebuild_index()?;
 
     enable_raw_mode()?;
@@ -52,28 +58,93 @@ fn main() -> Result<()> {
 
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     let mut mouse_input = MouseInputController::default();
+    let mut scheduler = RenderScheduler::new();
+    let mut last_mouse_hover: Option<(std::path::PathBuf, ideot::buffer::Position)> = None;
+    let mut pending_mouse_hover: Option<(Instant, std::path::PathBuf, ideot::buffer::Position)> =
+        None;
+    let mut mouse_entered_hover_panel = false;
     loop {
-        terminal.draw(|frame| ui::render(frame, app))?;
+        if scheduler.tick() == TickAction::Render {
+            terminal.draw(|frame| ui::render(frame, app))?;
+        }
         if app.should_quit {
             break;
         }
-        if !event::poll(Duration::from_millis(100))? {
+        if let Some((due_at, path, pos)) = pending_mouse_hover.as_ref() {
+            if Instant::now() >= *due_at {
+                let path = path.clone();
+                let pos = *pos;
+                pending_mouse_hover = None;
+                app.lsp_hover_preview(&path, pos);
+                mouse_entered_hover_panel = false;
+                scheduler.mark_dirty();
+            }
+        }
+        if !event::poll(Duration::from_millis(16))? {
+            if scheduler.should_poll_lsp_after_idle() && app.poll_lsp() {
+                scheduler.mark_dirty();
+            }
             continue;
         }
         match event::read()? {
+            Event::Key(key)
+                if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('q') =>
+            {
+                app.should_quit = true;
+            }
             Event::Key(key)
                 if app.help_open()
                     && help_modal_key_action(key.modifiers, key.code) == HelpModalAction::Close =>
             {
                 app.toggle_help();
             }
-            Event::Key(_) if app.help_open() => {}
-            Event::Mouse(mouse) if app.help_open() => match help_modal_mouse_action(mouse.kind) {
-                HelpModalAction::Close => app.toggle_help(),
-                HelpModalAction::Ignore => {}
+            Event::Key(key) if app.help_open() => match key.code {
+                KeyCode::Down => app.scroll_help_down(),
+                KeyCode::Up => app.scroll_help_up(),
+                KeyCode::PageDown => app.page_help_down(),
+                KeyCode::PageUp => app.page_help_up(),
+                _ => {}
             },
+            Event::Mouse(mouse) if app.help_open() => match mouse.kind {
+                MouseEventKind::ScrollDown => app.scroll_help_down(),
+                MouseEventKind::ScrollUp => app.scroll_help_up(),
+                _ => match help_modal_mouse_action(mouse.kind) {
+                    HelpModalAction::Close => app.toggle_help(),
+                    HelpModalAction::Ignore => {}
+                },
+            },
+            Event::Key(key) if app.hover_panel_focused() => match key.code {
+                KeyCode::Esc => app.close_hover_panel(),
+                KeyCode::Down => app.scroll_hover_down(),
+                KeyCode::Up => app.scroll_hover_up(),
+                KeyCode::PageDown => app.page_hover_down(),
+                KeyCode::PageUp => app.page_hover_up(),
+                _ => {}
+            },
+            Event::Mouse(mouse) if app.hover_panel_focused() => match mouse.kind {
+                MouseEventKind::ScrollDown => app.scroll_hover_down(),
+                MouseEventKind::ScrollUp => app.scroll_hover_up(),
+                _ => {}
+            },
+            Event::Mouse(mouse) if app.hover_panel_open() => {
+                let size = terminal.size()?;
+                let hover_area =
+                    ui::hover_popup_mouse_region(Rect::new(0, 0, size.width, size.height));
+                let over_hover = ui::rect_contains(hover_area, mouse.column, mouse.row);
+                if over_hover {
+                    mouse_entered_hover_panel = true;
+                }
+                match mouse.kind {
+                    MouseEventKind::ScrollDown if over_hover => app.scroll_hover_down(),
+                    MouseEventKind::ScrollUp if over_hover => app.scroll_hover_up(),
+                    MouseEventKind::Moved if !over_hover && mouse_entered_hover_panel => {
+                        app.close_hover_panel();
+                        mouse_entered_hover_panel = false;
+                    }
+                    _ => {}
+                }
+            }
             Event::Key(key) => match (key.modifiers, key.code) {
-                (KeyModifiers::CONTROL, KeyCode::Char('q')) => app.should_quit = true,
                 (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
                     let _ = app.save_current();
                 }
@@ -82,6 +153,18 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (KeyModifiers::CONTROL, KeyCode::Char('p')) => app.toggle_search(),
                 (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
                     let _ = app.open_git_browser();
+                }
+                (KeyModifiers::CONTROL, KeyCode::Char('b')) => {
+                    let _ = app.toggle_file_pane_visible();
+                }
+                (KeyModifiers::CONTROL, KeyCode::Char('t')) => {
+                    let _ = app.toggle_line_numbers_visible();
+                }
+                (KeyModifiers::CONTROL, KeyCode::Char('l')) => {
+                    let _ = app.toggle_lsp_enabled();
+                }
+                (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
+                    let _ = app.toggle_lsp_hover_enabled();
                 }
                 (_, KeyCode::F(1)) => app.toggle_help(),
                 (KeyModifiers::CONTROL, KeyCode::Char('m')) => {
@@ -107,6 +190,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (_, KeyCode::Enter) if app.git_view().is_some() => {
                     let _ = app.activate_git_selection();
                 }
+                (_, KeyCode::Esc) if app.search_open() => app.close_search(),
                 (_, KeyCode::Esc) if app.file_prompt().is_some() => app.cancel_file_prompt(),
                 (_, KeyCode::Enter) if app.file_prompt().is_some() => {
                     let _ = app.submit_file_prompt();
@@ -209,11 +293,14 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (_, KeyCode::Backspace) => app.backspace(),
                 (_, KeyCode::Char(ch)) if app.search_open() => app.push_search_char(ch),
                 (KeyModifiers::CONTROL, KeyCode::Char('h')) => {
-                    if let Some(editor) = app.editor() {
-                        if let Some(path) = editor.buffer().path() {
-                            let pos = editor.cursor();
-                            app.lsp_hover(path, pos);
-                        }
+                    let hover_target = app.editor().and_then(|editor| {
+                        editor
+                            .buffer()
+                            .path()
+                            .map(|path| (path.to_path_buf(), editor.cursor()))
+                    });
+                    if let Some((path, pos)) = hover_target {
+                        app.lsp_hover(&path, pos);
                     }
                 }
                 (KeyModifiers::CONTROL, KeyCode::Char('/')) => {
@@ -243,7 +330,11 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
             }
             Event::Mouse(mouse) => {
                 let size = terminal.size()?;
-                let explorer_width = size.width * 30 / 100;
+                let explorer_width = if app.file_pane_visible() {
+                    size.width * 30 / 100
+                } else {
+                    0
+                };
                 let content_height = size.height.saturating_sub(1);
                 let in_content_rows = mouse.row > 0 && mouse.row < content_height.saturating_sub(1);
                 let editor_x = explorer_width.saturating_add(1);
@@ -286,11 +377,12 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     MouseEventKind::Down(MouseButton::Left)
                         if mouse.column > explorer_width && in_content_rows =>
                     {
-                        if let Some(action) = mouse_input.left_down(
+                        if let Some(action) = mouse_input.left_down_with_gutter(
                             mouse.column,
                             mouse.row,
                             &editor_viewport,
                             &visible_lines,
+                            app.editor_gutter_width(),
                         ) {
                             apply_mouse_action(app, action, editor_height as usize);
                         }
@@ -298,11 +390,12 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     MouseEventKind::Drag(MouseButton::Left)
                         if mouse.column > explorer_width && in_content_rows =>
                     {
-                        if let Some(action) = mouse_input.drag(
+                        if let Some(action) = mouse_input.drag_with_gutter(
                             mouse.column,
                             mouse.row,
                             &editor_viewport,
                             &visible_lines,
+                            app.editor_gutter_width(),
                         ) {
                             apply_mouse_action(app, action, editor_height as usize);
                         }
@@ -312,6 +405,33 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                             apply_mouse_action(app, action, editor_height as usize);
                         }
                     }
+                    MouseEventKind::Moved if mouse.column > explorer_width && in_content_rows => {
+                        let hover_target = editor_viewport
+                            .position_for_rendered_editor_cell_with_gutter(
+                                mouse.column,
+                                mouse.row,
+                                &visible_lines,
+                                app.editor_gutter_width(),
+                            )
+                            .and_then(|pos| {
+                                app.editor().and_then(|editor| {
+                                    editor.buffer().path().map(|path| (path.to_path_buf(), pos))
+                                })
+                            });
+                        if let Some((path, pos)) = hover_target {
+                            let target = (path.clone(), pos);
+                            if last_mouse_hover.as_ref() != Some(&target) {
+                                last_mouse_hover = Some(target);
+                                pending_mouse_hover =
+                                    Some((Instant::now() + Duration::from_millis(350), path, pos));
+                            }
+                        }
+                    }
+                    MouseEventKind::Moved if app.hover_panel_open() => {
+                        app.close_hover_panel();
+                    }
+                    MouseEventKind::ScrollDown if app.hover_panel_open() => app.scroll_hover_down(),
+                    MouseEventKind::ScrollUp if app.hover_panel_open() => app.scroll_hover_up(),
                     MouseEventKind::ScrollDown
                         if app.git_view() == Some(ideot::app::GitView::Diff) =>
                     {
@@ -336,8 +456,10 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
             _ => {}
         }
 
-        // Poll LSP messages (non-blocking)
-        app.poll_lsp();
+        if app.poll_lsp() {
+            scheduler.mark_dirty();
+        }
+        scheduler.mark_dirty();
     }
     Ok(())
 }

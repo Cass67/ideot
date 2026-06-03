@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
 use serde_json::{json, Value};
@@ -68,7 +70,7 @@ impl LspClient {
     /// Returns `None` if no server is found for the extension.
     pub fn init(ext: &str, root: &Path) -> Option<Self> {
         let server = discover_server(ext)?;
-        let root_uri = root.to_string_lossy().to_string();
+        let root_uri = format!("file://{}", root.display());
         Some(Self::spawn(server, root_uri))
     }
 
@@ -190,23 +192,34 @@ fn run_server(
     let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
 
-    // Pending request id -> callback kind
-    let mut pending: HashMap<u64, PendingKind> = HashMap::new();
-    let mut id_gen = 1u64;
+    let pending: Arc<Mutex<HashMap<u64, PendingKind>>> = Arc::new(Mutex::new(HashMap::new()));
+    let initialized = Arc::new((Mutex::new(false), Condvar::new()));
+    let next_id = Arc::new(AtomicU64::new(1));
+    let (writer_tx, writer_rx) = mpsc::channel();
 
-    let mut next_id = || -> u64 {
-        id_gen += 1;
-        id_gen
-    };
+    let writer_handle = thread::spawn(move || {
+        while let Ok(msg) = writer_rx.recv() {
+            match msg {
+                WriterMsg::Request { id, method, params } => {
+                    write_jsonrpc_request(&mut stdin, id, &method, &params);
+                }
+                WriterMsg::Notification { method, params } => {
+                    write_jsonrpc_notification(&mut stdin, &method, &params);
+                }
+                WriterMsg::Shutdown => break,
+            }
+        }
+    });
 
-    // Send initialize
-    let init_id = next_id();
-    pending.insert(init_id, PendingKind::Initialize);
-    write_jsonrpc(
-        &mut stdin,
-        init_id,
-        "initialize",
-        &json!({
+    let init_id = allocate_request_id(&next_id);
+    pending
+        .lock()
+        .unwrap()
+        .insert(init_id, PendingKind::Initialize);
+    let _ = writer_tx.send(WriterMsg::Request {
+        id: init_id,
+        method: "initialize".to_string(),
+        params: json!({
             "processId": null,
             "rootUri": root_uri,
             "capabilities": {
@@ -219,27 +232,36 @@ fn run_server(
             },
             "initializationOptions": null
         }),
-    );
+    });
 
-    let reader = BufReader::new(stdout);
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => break,
-        };
+    let request_writer_tx = writer_tx.clone();
+    let request_pending = Arc::clone(&pending);
+    let request_initialized = Arc::clone(&initialized);
+    let request_next_id = Arc::clone(&next_id);
+    let request_handle = thread::spawn(move || {
+        while let Ok(req) = req_rx.recv() {
+            wait_for_initialized(&request_initialized);
+            if !forward_lsp_request(req, &request_writer_tx, &request_pending, &request_next_id) {
+                break;
+            }
+        }
+    });
 
-        let params: Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
+    let mut reader = BufReader::new(stdout);
+    while let Ok(Some(params)) = read_jsonrpc_message(&mut reader) {
         // Route by id (response) or method (notification)
         if let Some(id) = params.get("id").and_then(|v| v.as_u64()) {
-            if let Some(kind) = pending.remove(&id) {
+            let kind = pending.lock().unwrap().remove(&id);
+            if let Some(kind) = kind {
                 match kind {
                     PendingKind::Initialize => {
-                        // Send initialized notification (no id)
-                        write_jsonrpc(&mut stdin, 0, "initialized", &json!({}));
+                        let _ = writer_tx.send(WriterMsg::Notification {
+                            method: "initialized".to_string(),
+                            params: json!({}),
+                        });
+                        let (lock, cvar) = &*initialized;
+                        *lock.lock().unwrap() = true;
+                        cvar.notify_all();
                     }
                     PendingKind::Hover => {
                         let info = parse_hover_result(&params);
@@ -277,8 +299,130 @@ fn run_server(
         }
     }
 
-    // Drain remaining requests so the main thread doesn't hang on send
-    while req_rx.try_recv().is_ok() {}
+    let _ = writer_tx.send(WriterMsg::Shutdown);
+    let _ = writer_handle.join();
+    drop(request_handle);
+}
+
+enum WriterMsg {
+    Request {
+        id: u64,
+        method: String,
+        params: Value,
+    },
+    Notification {
+        method: String,
+        params: Value,
+    },
+    Shutdown,
+}
+
+fn allocate_request_id(next_id: &AtomicU64) -> u64 {
+    next_id.fetch_add(1, Ordering::Relaxed) + 1
+}
+
+fn wait_for_initialized(initialized: &Arc<(Mutex<bool>, Condvar)>) {
+    let (lock, cvar) = &**initialized;
+    let mut ready = lock.lock().unwrap();
+    while !*ready {
+        ready = cvar.wait(ready).unwrap();
+    }
+}
+
+fn forward_lsp_request(
+    req: LspRequest,
+    writer_tx: &Sender<WriterMsg>,
+    pending: &Arc<Mutex<HashMap<u64, PendingKind>>>,
+    next_id: &AtomicU64,
+) -> bool {
+    match req {
+        LspRequest::Init => true,
+        LspRequest::DidOpen {
+            uri,
+            text,
+            language,
+        } => writer_tx
+            .send(WriterMsg::Notification {
+                method: "textDocument/didOpen".to_string(),
+                params: json!({
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": language,
+                        "version": 1,
+                        "text": text,
+                    }
+                }),
+            })
+            .is_ok(),
+        LspRequest::DidChange { uri, text } => writer_tx
+            .send(WriterMsg::Notification {
+                method: "textDocument/didChange".to_string(),
+                params: json!({
+                    "textDocument": { "uri": uri, "version": 1 },
+                    "contentChanges": [{ "text": text }]
+                }),
+            })
+            .is_ok(),
+        LspRequest::DidSave { uri, text } => writer_tx
+            .send(WriterMsg::Notification {
+                method: "textDocument/didSave".to_string(),
+                params: json!({
+                    "textDocument": { "uri": uri },
+                    "text": text,
+                }),
+            })
+            .is_ok(),
+        LspRequest::DidClose { uri } => writer_tx
+            .send(WriterMsg::Notification {
+                method: "textDocument/didClose".to_string(),
+                params: json!({ "textDocument": { "uri": uri } }),
+            })
+            .is_ok(),
+        LspRequest::Hover { uri, position } => send_pending_request(
+            writer_tx,
+            pending,
+            next_id,
+            PendingKind::Hover,
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": position }),
+        ),
+        LspRequest::Completion { uri, position } => send_pending_request(
+            writer_tx,
+            pending,
+            next_id,
+            PendingKind::Completion,
+            "textDocument/completion",
+            json!({ "textDocument": { "uri": uri }, "position": position }),
+        ),
+        LspRequest::Definition { uri, position } => send_pending_request(
+            writer_tx,
+            pending,
+            next_id,
+            PendingKind::Definition,
+            "textDocument/definition",
+            json!({ "textDocument": { "uri": uri }, "position": position }),
+        ),
+        LspRequest::Shutdown => writer_tx.send(WriterMsg::Shutdown).is_ok(),
+    }
+}
+
+fn send_pending_request(
+    writer_tx: &Sender<WriterMsg>,
+    pending: &Arc<Mutex<HashMap<u64, PendingKind>>>,
+    next_id: &AtomicU64,
+    kind: PendingKind,
+    method: &str,
+    params: Value,
+) -> bool {
+    let id = allocate_request_id(next_id);
+    pending.lock().unwrap().insert(id, kind);
+    writer_tx
+        .send(WriterMsg::Request {
+            id,
+            method: method.to_string(),
+            params,
+        })
+        .is_ok()
 }
 
 /// What kind of response we're waiting for.
@@ -292,20 +436,69 @@ enum PendingKind {
 
 // ─── JSON-RPC Writer ─────────────────────────────────────────────────
 
-fn write_jsonrpc(stdin: &mut std::process::ChildStdin, id: u64, method: &str, params: &Value) {
-    let obj = json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": method,
-        "params": params,
-    });
+fn write_jsonrpc_request(
+    stdin: &mut std::process::ChildStdin,
+    id: u64,
+    method: &str,
+    params: &Value,
+) {
+    write_jsonrpc_value(
+        stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        }),
+    );
+}
 
-    let payload = serde_json::to_string(&obj).unwrap();
+fn write_jsonrpc_notification(stdin: &mut std::process::ChildStdin, method: &str, params: &Value) {
+    write_jsonrpc_value(
+        stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        }),
+    );
+}
+
+fn write_jsonrpc_value(stdin: &mut std::process::ChildStdin, obj: &Value) {
+    let payload = serde_json::to_string(obj).unwrap();
     let content_length = payload.len();
     let header = format!("Content-Length: {content_length}\r\n\r\n");
 
     let _ = stdin.write_all(header.as_bytes());
     let _ = stdin.write_all(payload.as_bytes());
+    let _ = stdin.flush();
+}
+
+fn read_jsonrpc_message<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Value>> {
+    let mut content_length = None;
+    loop {
+        let mut line = String::new();
+        let bytes = reader.read_line(&mut line)?;
+        if bytes == 0 {
+            return Ok(None);
+        }
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some(value) = trimmed.strip_prefix("Content-Length:") {
+            content_length = value.trim().parse::<usize>().ok();
+        }
+    }
+
+    let Some(content_length) = content_length else {
+        return Ok(None);
+    };
+    let mut payload = vec![0u8; content_length];
+    reader.read_exact(&mut payload)?;
+    let value = serde_json::from_slice(&payload)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+    Ok(Some(value))
 }
 
 // ─── Parsing Helpers ─────────────────────────────────────────────────
@@ -454,4 +647,33 @@ fn parse_location(v: &Value) -> Option<Location> {
     let uri = v.get("uri")?.as_str()?.to_string();
     let range = parse_range(v.get("range")?)?;
     Some(Location { uri, range })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn reads_header_framed_jsonrpc_message() {
+        let payload = r#"{"jsonrpc":"2.0","id":7,"result":{"contents":"hover text"}}"#;
+        let bytes = format!("Content-Length: {}\r\n\r\n{}", payload.len(), payload);
+        let mut reader = Cursor::new(bytes.into_bytes());
+
+        let value = read_jsonrpc_message(&mut reader).unwrap().unwrap();
+
+        assert_eq!(value["id"], 7);
+        assert_eq!(value["result"]["contents"], "hover text");
+    }
+
+    #[test]
+    fn initialized_message_is_notification_without_id() {
+        let obj = json!({
+            "jsonrpc": "2.0",
+            "method": "initialized",
+            "params": {},
+        });
+
+        assert!(obj.get("id").is_none());
+    }
 }

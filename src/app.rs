@@ -4,12 +4,23 @@ use crate::buffer::{Buffer, Position};
 use crate::editor::Editor;
 use crate::fs::{ProjectFile, ProjectIndex};
 use crate::git::{self, DiffRow, GitCommit};
-use crate::lsp::{CompletionItem, DiagnosticsStore, HoverInfo, LspClient, LspMsg};
+use crate::lsp::{
+    configured_server_command, CompletionItem, Diagnostic, DiagnosticSeverity, DiagnosticsStore,
+    HoverInfo, LspClient, LspMsg,
+};
 use crate::marks::SessionMarks;
 use crate::search::{RecentFiles, SearchIndex};
+use crate::settings::Settings;
 use anyhow::{bail, Context, Result};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+
+fn lsp_language_id(extension: &str) -> &str {
+    match extension.trim_start_matches('.') {
+        "rs" => "rust",
+        other => other,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerEntry {
@@ -79,7 +90,12 @@ pub struct App {
     pub lsp: Option<LspClient>,
     pub diagnostics: DiagnosticsStore,
     pub hover_popup: Option<HoverInfo>,
+    pub hover_scroll: usize,
+    hover_focus_requested: bool,
+    hover_focused: bool,
     pub completion_popup: Option<Vec<CompletionItem>>,
+    lsp_status: String,
+    settings: Settings,
     index: Option<ProjectIndex>,
     search_index: SearchIndex,
     recent: RecentFiles,
@@ -94,6 +110,7 @@ pub struct App {
     explorer_scroll: usize,
     editor_scroll: usize,
     help_open: bool,
+    help_scroll: usize,
     file_prompt: FilePromptState,
     focus_pane: FocusPane,
     git: GitBrowserState,
@@ -101,13 +118,26 @@ pub struct App {
 
 impl App {
     pub fn new(root: PathBuf) -> Self {
+        Self::new_with_settings(root, Settings::default())
+    }
+
+    pub fn new_with_settings(root: PathBuf, settings: Settings) -> Self {
         Self {
             root,
             should_quit: false,
             lsp: None,
             diagnostics: DiagnosticsStore::new(),
             hover_popup: None,
+            hover_scroll: 0,
+            hover_focus_requested: false,
+            hover_focused: false,
             completion_popup: None,
+            lsp_status: if settings.lsp_enabled {
+                "LSP unavailable: no file".to_string()
+            } else {
+                "LSP off".to_string()
+            },
+            settings,
             index: None,
             search_index: SearchIndex::new(Vec::new()),
             recent: RecentFiles::default(),
@@ -122,6 +152,7 @@ impl App {
             explorer_scroll: 0,
             editor_scroll: 0,
             help_open: false,
+            help_scroll: 0,
             file_prompt: FilePromptState::default(),
             focus_pane: FocusPane::Explorer,
             git: GitBrowserState::default(),
@@ -145,21 +176,52 @@ impl App {
         self.search_open = false;
         self.search_query.clear();
         self.editor_scroll = 0;
-        self.lsp_did_open(&path, &text);
 
-        // Spawn LSP client if not already initialized
-        if self.lsp.is_none() {
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        // Spawn LSP client if enabled and not already initialized
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !self.settings.lsp_enabled {
+            self.lsp_status = "LSP off".to_string();
+        } else if self.lsp.is_none() {
             if let Some(lsp) = LspClient::init(ext, &self.root) {
+                let command = configured_server_command(ext).unwrap_or("language server");
                 self.lsp = Some(lsp);
-                self.lsp_did_open(&path, &text);
+                self.lsp_status = format!("LSP active: {command}");
+            } else if let Some(command) = configured_server_command(ext) {
+                self.lsp_status =
+                    format!("LSP unavailable: {command} not found or failed to start");
+            } else {
+                self.lsp_status = "LSP unavailable: no server configured".to_string();
             }
+        }
+        if self.settings.lsp_enabled {
+            self.lsp_did_open(&path, &text);
         }
         Ok(())
     }
 
-    pub fn lsp_hover(&self, path: &std::path::Path, pos: Position) {
-        if let Some(lsp) = &self.lsp {
+    pub fn lsp_hover(&mut self, path: &std::path::Path, pos: Position) {
+        self.request_lsp_hover(path, pos, true);
+    }
+
+    pub fn lsp_hover_preview(&mut self, path: &std::path::Path, pos: Position) {
+        if self.settings.lsp_hover_enabled {
+            self.request_lsp_hover(path, pos, false);
+        }
+    }
+
+    fn request_lsp_hover(&mut self, path: &std::path::Path, pos: Position, focus_panel: bool) {
+        if !self.settings.lsp_hover_enabled {
+            self.status = "LSP hover off".to_string();
+            return;
+        }
+        self.hover_popup = None;
+        self.hover_scroll = 0;
+        self.hover_focus_requested = focus_panel;
+        self.hover_focused = false;
+        if !self.settings.lsp_enabled {
+            self.status = "hover unavailable: LSP off".to_string();
+        } else if let Some(lsp) = &self.lsp {
+            self.status = "hover requested".to_string();
             lsp.hover(
                 &self.lsp_uri(path),
                 super::lsp::Position {
@@ -167,10 +229,25 @@ impl App {
                     character: pos.column as u32,
                 },
             );
+        } else {
+            self.status = "hover unavailable: no active LSP".to_string();
         }
     }
 
+    pub fn lsp_hover_preview_for_test(&mut self, _pos: Position) {
+        self.hover_focus_requested = false;
+        self.hover_focused = false;
+    }
+
+    pub fn lsp_hover_keyboard_for_test(&mut self, _pos: Position) {
+        self.hover_focus_requested = true;
+        self.hover_focused = false;
+    }
+
     pub fn lsp_completion(&self, path: &std::path::Path, pos: Position) {
+        if !self.settings.lsp_enabled {
+            return;
+        }
         if let Some(lsp) = &self.lsp {
             lsp.completion(
                 &self.lsp_uri(path),
@@ -183,6 +260,9 @@ impl App {
     }
 
     pub fn lsp_definition(&self, path: &std::path::Path, pos: Position) {
+        if !self.settings.lsp_enabled {
+            return;
+        }
         if let Some(lsp) = &self.lsp {
             lsp.definition(
                 &self.lsp_uri(path),
@@ -195,9 +275,12 @@ impl App {
     }
 
     fn lsp_did_open(&self, path: &std::path::Path, text: &str) {
+        if !self.settings.lsp_enabled {
+            return;
+        }
         if let Some(lsp) = &self.lsp {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            let lang = ext.trim_start_matches('.');
+            let lang = lsp_language_id(ext);
             lsp.did_open(&self.lsp_uri(path), text, lang);
         }
     }
@@ -240,12 +323,18 @@ impl App {
     }
 
     fn lsp_change(&self, path: &std::path::Path, text: String) {
+        if !self.settings.lsp_enabled {
+            return;
+        }
         if let Some(lsp) = &self.lsp {
             lsp.did_change(&self.lsp_uri(path), &text);
         }
     }
 
     fn lsp_save(&self, path: &std::path::Path, text: String) {
+        if !self.settings.lsp_enabled {
+            return;
+        }
         if let Some(lsp) = &self.lsp {
             lsp.did_save(&self.lsp_uri(path), &text);
         }
@@ -266,18 +355,48 @@ impl App {
         }
     }
 
-    pub fn poll_lsp(&mut self) {
+    pub fn poll_lsp(&mut self) -> bool {
+        if !self.settings.lsp_enabled {
+            return false;
+        }
+        let mut messages = Vec::new();
         if let Some(lsp) = &self.lsp {
             while let Some(msg) = lsp.poll() {
-                match msg {
-                    LspMsg::Diagnostics { uri, diagnostics } => {
-                        self.diagnostics.update(uri, diagnostics);
-                    }
-                    LspMsg::Hover(h) => self.hover_popup = h,
-                    LspMsg::Completion(c) => self.completion_popup = c,
-                    LspMsg::Definition(_) => {}
+                messages.push(msg);
+            }
+        }
+        let received = !messages.is_empty();
+        for msg in messages {
+            self.apply_lsp_message(msg);
+        }
+        received
+    }
+
+    pub fn apply_lsp_message_for_test(&mut self, msg: LspMsg) {
+        self.apply_lsp_message(msg);
+    }
+
+    fn apply_lsp_message(&mut self, msg: LspMsg) {
+        match msg {
+            LspMsg::Diagnostics { uri, diagnostics } => {
+                self.diagnostics.update(uri, diagnostics);
+            }
+            LspMsg::Hover(h) => {
+                self.hover_popup = h;
+                self.hover_scroll = 0;
+                self.hover_focused = self.hover_popup.is_some() && self.hover_focus_requested;
+                if self.hover_popup.is_some() {
+                    self.status = if self.hover_focused {
+                        "hover panel".to_string()
+                    } else {
+                        "hover preview".to_string()
+                    };
+                } else {
+                    self.status = "no hover info".to_string();
                 }
             }
+            LspMsg::Completion(c) => self.completion_popup = c,
+            LspMsg::Definition(_) => {}
         }
     }
 
@@ -355,6 +474,150 @@ impl App {
 
     pub fn editor(&self) -> Option<&Editor> {
         self.editor.as_ref()
+    }
+
+    pub fn editor_mut(&mut self) -> Option<&mut Editor> {
+        self.editor.as_mut()
+    }
+
+    pub fn hover_panel_open(&self) -> bool {
+        self.hover_popup.is_some()
+    }
+
+    pub fn hover_panel_focused(&self) -> bool {
+        self.hover_popup.is_some() && self.hover_focused
+    }
+
+    pub fn focus_hover_panel(&mut self) {
+        if self.hover_popup.is_some() {
+            self.hover_focused = true;
+            self.hover_focus_requested = true;
+            self.status = "hover panel".to_string();
+        }
+    }
+
+    pub fn close_hover_panel(&mut self) {
+        self.hover_popup = None;
+        self.hover_scroll = 0;
+        self.hover_focused = false;
+        self.hover_focus_requested = false;
+        self.status.clear();
+    }
+
+    pub fn scroll_hover_down(&mut self) {
+        if let Some(hover) = &self.hover_popup {
+            let max_scroll = hover.contents.lines().count().saturating_sub(1);
+            self.hover_scroll = (self.hover_scroll + 1).min(max_scroll);
+        }
+    }
+
+    pub fn scroll_hover_up(&mut self) {
+        self.hover_scroll = self.hover_scroll.saturating_sub(1);
+    }
+
+    pub fn page_hover_down(&mut self) {
+        for _ in 0..10 {
+            self.scroll_hover_down();
+        }
+    }
+
+    pub fn page_hover_up(&mut self) {
+        self.hover_scroll = self.hover_scroll.saturating_sub(10);
+    }
+
+    pub fn current_lsp_uri(&self) -> Option<String> {
+        let path = self.editor.as_ref()?.buffer().path()?;
+        Some(self.lsp_uri(path))
+    }
+
+    pub fn current_file_diagnostics(&self) -> &[Diagnostic] {
+        self.current_lsp_uri()
+            .and_then(|uri| self.diagnostics.get(&uri).map(|d| d as &[Diagnostic]))
+            .unwrap_or(&[])
+    }
+
+    pub fn diagnostic_marker_for_line(&self, line: usize) -> &'static str {
+        let mut has_warning = false;
+        let mut has_info = false;
+        for diagnostic in self.current_file_diagnostics() {
+            if diagnostic.range.start.line as usize == line {
+                match diagnostic
+                    .severity
+                    .unwrap_or(DiagnosticSeverity::Information)
+                {
+                    DiagnosticSeverity::Error => return "✗",
+                    DiagnosticSeverity::Warning => has_warning = true,
+                    DiagnosticSeverity::Information | DiagnosticSeverity::Hint => has_info = true,
+                }
+            }
+        }
+        if has_warning {
+            "!"
+        } else if has_info {
+            "·"
+        } else {
+            " "
+        }
+    }
+
+    pub fn status_line(&self) -> String {
+        let base = self.current_relative().unwrap_or("no file");
+        let lsp = self.lsp_status.as_str();
+        let diagnostics = self.current_file_diagnostics();
+        if diagnostics.is_empty() {
+            return if self.status.is_empty() {
+                format!("{base} · {lsp}")
+            } else {
+                format!("{base} · {lsp} · {}", self.status)
+            };
+        }
+
+        let mut errors = 0;
+        let mut warnings = 0;
+        for diagnostic in diagnostics {
+            match diagnostic
+                .severity
+                .unwrap_or(DiagnosticSeverity::Information)
+            {
+                DiagnosticSeverity::Error => errors += 1,
+                DiagnosticSeverity::Warning => warnings += 1,
+                DiagnosticSeverity::Information | DiagnosticSeverity::Hint => {}
+            }
+        }
+        let mut parts = Vec::new();
+        if errors > 0 {
+            parts.push(format!(
+                "{errors} {}",
+                if errors == 1 { "error" } else { "errors" }
+            ));
+        }
+        if warnings > 0 {
+            parts.push(format!(
+                "{warnings} {}",
+                if warnings == 1 { "warning" } else { "warnings" }
+            ));
+        }
+        if parts.is_empty() {
+            parts.push(format!("{} diagnostics", diagnostics.len()));
+        }
+
+        let current_line = self.editor.as_ref().map(|e| e.cursor().line as u32);
+        let current_message = current_line.and_then(|line| {
+            diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.range.start.line == line)
+                .map(|diagnostic| diagnostic.message.as_str())
+        });
+        let mut status = if let Some(message) = current_message {
+            format!("{base} · {lsp} · {} · {message}", parts.join(", "))
+        } else {
+            format!("{base} · {lsp} · {}", parts.join(", "))
+        };
+        if !self.status.is_empty() {
+            status.push_str(" · ");
+            status.push_str(&self.status);
+        }
+        status
     }
 
     pub fn marks(&self) -> &SessionMarks {
@@ -474,6 +737,12 @@ impl App {
         self.selected_file = 0;
     }
 
+    pub fn close_search(&mut self) {
+        self.search_open = false;
+        self.search_query.clear();
+        self.selected_file = 0;
+    }
+
     pub fn search_open(&self) -> bool {
         self.search_open
     }
@@ -482,8 +751,34 @@ impl App {
         self.help_open
     }
 
+    pub fn help_scroll(&self) -> usize {
+        self.help_scroll
+    }
+
     pub fn toggle_help(&mut self) {
         self.help_open = !self.help_open;
+        if self.help_open {
+            self.help_scroll = 0;
+        }
+    }
+
+    pub fn scroll_help_down(&mut self) {
+        self.help_scroll =
+            (self.help_scroll + 1).min(crate::ui::help_text_lines().len().saturating_sub(1));
+    }
+
+    pub fn scroll_help_up(&mut self) {
+        self.help_scroll = self.help_scroll.saturating_sub(1);
+    }
+
+    pub fn page_help_down(&mut self) {
+        for _ in 0..10 {
+            self.scroll_help_down();
+        }
+    }
+
+    pub fn page_help_up(&mut self) {
+        self.help_scroll = self.help_scroll.saturating_sub(10);
     }
 
     pub fn open_git_browser(&mut self) -> Result<()> {
@@ -688,6 +983,80 @@ impl App {
             FocusPane::Explorer => FocusPane::Editor,
             FocusPane::Editor => FocusPane::Explorer,
         };
+    }
+
+    pub fn lsp_enabled(&self) -> bool {
+        self.settings.lsp_enabled
+    }
+
+    pub fn lsp_hover_enabled(&self) -> bool {
+        self.settings.lsp_hover_enabled
+    }
+
+    pub fn file_pane_visible(&self) -> bool {
+        self.settings.file_pane_visible
+    }
+
+    pub fn line_numbers_visible(&self) -> bool {
+        self.settings.line_numbers_visible
+    }
+
+    pub fn editor_gutter_width(&self) -> u16 {
+        if self.settings.line_numbers_visible {
+            9
+        } else {
+            2
+        }
+    }
+
+    pub fn toggle_line_numbers_visible(&mut self) -> Result<()> {
+        self.settings.line_numbers_visible = !self.settings.line_numbers_visible;
+        self.settings.save()?;
+        self.status = if self.settings.line_numbers_visible {
+            "line numbers on".to_string()
+        } else {
+            "line numbers off".to_string()
+        };
+        Ok(())
+    }
+
+    pub fn toggle_lsp_hover_enabled(&mut self) -> Result<()> {
+        self.settings.lsp_hover_enabled = !self.settings.lsp_hover_enabled;
+        self.settings.save()?;
+        if self.settings.lsp_hover_enabled {
+            self.status = "LSP hover on".to_string();
+        } else {
+            self.close_hover_panel();
+            self.status = "LSP hover off".to_string();
+        }
+        Ok(())
+    }
+
+    pub fn toggle_file_pane_visible(&mut self) -> Result<()> {
+        self.settings.file_pane_visible = !self.settings.file_pane_visible;
+        self.settings.save()?;
+        if self.settings.file_pane_visible {
+            self.status = "file pane on".to_string();
+        } else {
+            self.focus_pane = FocusPane::Editor;
+            self.status = "file pane off".to_string();
+        }
+        Ok(())
+    }
+
+    pub fn toggle_lsp_enabled(&mut self) -> Result<()> {
+        self.settings.lsp_enabled = !self.settings.lsp_enabled;
+        self.settings.save()?;
+        if self.settings.lsp_enabled {
+            self.lsp_status = "LSP on: reopen file to start server".to_string();
+            self.status = "LSP on".to_string();
+        } else {
+            self.hover_popup = None;
+            self.completion_popup = None;
+            self.lsp_status = "LSP off".to_string();
+            self.status = "LSP off".to_string();
+        }
+        Ok(())
     }
 
     pub fn file_prompt(&self) -> Option<FilePrompt> {

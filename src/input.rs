@@ -1,4 +1,22 @@
 use crate::buffer::Position;
+use crossterm::event::{KeyCode, KeyModifiers, MouseEventKind};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HelpModalAction {
+    Close,
+    Ignore,
+}
+
+pub fn help_modal_key_action(modifiers: KeyModifiers, code: KeyCode) -> HelpModalAction {
+    match (modifiers, code) {
+        (_, KeyCode::F(1)) | (_, KeyCode::Esc) => HelpModalAction::Close,
+        _ => HelpModalAction::Ignore,
+    }
+}
+
+pub fn help_modal_mouse_action(_kind: MouseEventKind) -> HelpModalAction {
+    HelpModalAction::Ignore
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditorViewport {

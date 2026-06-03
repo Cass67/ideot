@@ -21,4 +21,5 @@ fn help_page_contains_full_command_reference() {
     assert!(help.contains("Ctrl-/       LSP completion"));
     assert!(help.contains("Ctrl-]       LSP go to definition"));
     assert!(help.contains("Drag editor text  Select text in ideot"));
+    assert!(help.contains("Help is modal; press F1 or Esc to return to the editor"));
 }

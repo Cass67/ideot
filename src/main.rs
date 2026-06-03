@@ -10,7 +10,10 @@ use crossterm::{
 };
 use ideot::{
     app::{App, FocusPane},
-    input::{EditorViewport, MouseAction, MouseInputController},
+    input::{
+        help_modal_key_action, help_modal_mouse_action, EditorViewport, HelpModalAction,
+        MouseAction, MouseInputController,
+    },
     ui,
 };
 use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
@@ -58,6 +61,17 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
             continue;
         }
         match event::read()? {
+            Event::Key(key)
+                if app.help_open()
+                    && help_modal_key_action(key.modifiers, key.code) == HelpModalAction::Close =>
+            {
+                app.toggle_help();
+            }
+            Event::Key(_) if app.help_open() => {}
+            Event::Mouse(mouse) if app.help_open() => match help_modal_mouse_action(mouse.kind) {
+                HelpModalAction::Close => app.toggle_help(),
+                HelpModalAction::Ignore => {}
+            },
             Event::Key(key) => match (key.modifiers, key.code) {
                 (KeyModifiers::CONTROL, KeyCode::Char('q')) => app.should_quit = true,
                 (KeyModifiers::CONTROL, KeyCode::Char('s')) => {

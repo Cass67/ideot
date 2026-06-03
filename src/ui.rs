@@ -323,6 +323,7 @@ pub fn footer_shortcuts(_git_open: bool) -> &'static str {
 pub fn help_text_lines() -> Vec<&'static str> {
     vec![
         "Keyboard",
+        "  Help is modal; press F1 or Esc to return to the editor",
         "  Tab          Toggle focus between explorer and editor",
         "  Arrows       Navigate focused pane / move cursor in editor",
         "  Page Up/Down Scroll focused pane",

@@ -1,5 +1,9 @@
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ideot::buffer::Position;
-use ideot::input::{EditorViewport, MouseAction, MouseInputController};
+use ideot::input::{
+    help_modal_key_action, help_modal_mouse_action, EditorViewport, HelpModalAction, MouseAction,
+    MouseInputController,
+};
 
 #[test]
 fn maps_editor_cell_to_buffer_position_with_scroll() {
@@ -91,6 +95,38 @@ fn drag_sequence_emits_start_update_finish_actions() {
 
 use ideot::app::App;
 use tempfile::tempdir;
+
+#[test]
+fn help_modal_key_gate_only_allows_help_close_keys() {
+    assert_eq!(
+        help_modal_key_action(KeyModifiers::NONE, KeyCode::F(1)),
+        HelpModalAction::Close
+    );
+    assert_eq!(
+        help_modal_key_action(KeyModifiers::NONE, KeyCode::Esc),
+        HelpModalAction::Close
+    );
+    assert_eq!(
+        help_modal_key_action(KeyModifiers::NONE, KeyCode::Down),
+        HelpModalAction::Ignore
+    );
+    assert_eq!(
+        help_modal_key_action(KeyModifiers::CONTROL, KeyCode::Char('q')),
+        HelpModalAction::Ignore
+    );
+}
+
+#[test]
+fn help_modal_mouse_gate_blocks_underlying_mouse_actions() {
+    assert_eq!(
+        help_modal_mouse_action(MouseEventKind::Down(MouseButton::Left)),
+        HelpModalAction::Ignore
+    );
+    assert_eq!(
+        help_modal_mouse_action(MouseEventKind::ScrollDown),
+        HelpModalAction::Ignore
+    );
+}
 
 #[test]
 fn app_mouse_selection_actions_select_text() {

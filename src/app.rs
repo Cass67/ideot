@@ -18,6 +18,15 @@ use std::path::PathBuf;
 fn lsp_language_id(extension: &str) -> &str {
     match extension.trim_start_matches('.') {
         "rs" => "rust",
+        "js" | "jsx" | "mjs" => "javascript",
+        "ts" | "tsx" => "typescript",
+        "py" => "python",
+        "sh" | "bash" | "zsh" => "shellscript",
+        "yaml" | "yml" => "yaml",
+        "htm" | "html" => "html",
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => "cpp",
+        "c" | "h" => "c",
+        "md" | "mdx" => "markdown",
         other => other,
     }
 }

@@ -110,6 +110,74 @@ fn build_map() -> HashMap<&'static str, LanguageServer> {
             args: &["--stdio"],
         },
     );
+    m.insert(
+        ".json",
+        LanguageServer {
+            command: "vscode-json-language-server",
+            args: &["--stdio"],
+        },
+    );
+    for ext in [".yaml", ".yml"] {
+        m.insert(
+            ext,
+            LanguageServer {
+                command: "yaml-language-server",
+                args: &["--stdio"],
+            },
+        );
+    }
+    for ext in [".sh", ".bash", ".zsh"] {
+        m.insert(
+            ext,
+            LanguageServer {
+                command: "bash-language-server",
+                args: &["start"],
+            },
+        );
+    }
+    for ext in [".html", ".htm"] {
+        m.insert(
+            ext,
+            LanguageServer {
+                command: "vscode-html-language-server",
+                args: &["--stdio"],
+            },
+        );
+    }
+    for ext in [".css", ".scss", ".less"] {
+        m.insert(
+            ext,
+            LanguageServer {
+                command: "vscode-css-language-server",
+                args: &["--stdio"],
+            },
+        );
+    }
+    for ext in [".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".hh", ".hxx"] {
+        m.insert(
+            ext,
+            LanguageServer {
+                command: "clangd",
+                args: &[],
+            },
+        );
+    }
+    m.insert(
+        ".lua",
+        LanguageServer {
+            command: "lua-language-server",
+            args: &[],
+        },
+    );
+    for ext in [".md", ".mdx"] {
+        m.insert(
+            ext,
+            LanguageServer {
+                command: "marksman",
+                args: &[],
+            },
+        );
+    }
     m
 }
 
@@ -135,5 +203,22 @@ mod tests {
     #[test]
     fn extension_lookup_accepts_dotless_extension() {
         assert_eq!(configured_server_command("rs"), Some("rust-analyzer"));
+    }
+
+    #[test]
+    fn common_language_extensions_map_to_servers() {
+        for (extension, command) in [
+            ("json", "vscode-json-language-server"),
+            ("yaml", "yaml-language-server"),
+            ("sh", "bash-language-server"),
+            ("html", "vscode-html-language-server"),
+            ("css", "vscode-css-language-server"),
+            ("c", "clangd"),
+            ("cpp", "clangd"),
+            ("lua", "lua-language-server"),
+            ("md", "marksman"),
+        ] {
+            assert_eq!(configured_server_command(extension), Some(command));
+        }
     }
 }

@@ -117,6 +117,23 @@ fn assert_styled(spans: &[ideot::highlight::HighlightSpan], line: &str, text: &s
 }
 
 #[test]
+fn highlighter_supports_json_bash_html_css_c_cpp_and_lua() {
+    let mut highlighter = SimpleTreeSitterHighlighter::default();
+    for (hint, line) in [
+        ("json", "{ \"name\": true }"),
+        ("sh", "if true; then echo hi; fi"),
+        ("html", "<main class=\"app\">hello</main>"),
+        ("css", ".app { color: red; }"),
+        ("c", "int main(void) { return 0; }"),
+        ("cpp", "class App { public: int value; };"),
+        ("lua", "local name = \"ideot\""),
+    ] {
+        let spans = highlighter.highlight_line(Some(hint), line);
+        assert!(!spans.is_empty(), "expected {hint} to highlight {line:?}");
+    }
+}
+
+#[test]
 fn editor_highlighting_is_limited_to_visible_viewport() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("main.rs");

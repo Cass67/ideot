@@ -28,6 +28,13 @@ pub struct SimpleTreeSitterHighlighter {
     python: Option<TreeSitterLineHighlighter>,
     javascript: Option<TreeSitterLineHighlighter>,
     markdown: Option<TreeSitterLineHighlighter>,
+    json: Option<TreeSitterLineHighlighter>,
+    bash: Option<TreeSitterLineHighlighter>,
+    html: Option<TreeSitterLineHighlighter>,
+    css: Option<TreeSitterLineHighlighter>,
+    c: Option<TreeSitterLineHighlighter>,
+    cpp: Option<TreeSitterLineHighlighter>,
+    lua: Option<TreeSitterLineHighlighter>,
     fallback: PlainHighlighter,
 }
 
@@ -53,6 +60,34 @@ impl Default for SimpleTreeSitterHighlighter {
             markdown: TreeSitterLineHighlighter::new(
                 tree_sitter_md::LANGUAGE.into(),
                 tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
+            ),
+            json: TreeSitterLineHighlighter::new(
+                tree_sitter_json::LANGUAGE.into(),
+                tree_sitter_json::HIGHLIGHTS_QUERY,
+            ),
+            bash: TreeSitterLineHighlighter::new(
+                tree_sitter_bash::LANGUAGE.into(),
+                tree_sitter_bash::HIGHLIGHT_QUERY,
+            ),
+            html: TreeSitterLineHighlighter::new(
+                tree_sitter_html::LANGUAGE.into(),
+                tree_sitter_html::HIGHLIGHTS_QUERY,
+            ),
+            css: TreeSitterLineHighlighter::new(
+                tree_sitter_css::LANGUAGE.into(),
+                tree_sitter_css::HIGHLIGHTS_QUERY,
+            ),
+            c: TreeSitterLineHighlighter::new(
+                tree_sitter_c::LANGUAGE.into(),
+                tree_sitter_c::HIGHLIGHT_QUERY,
+            ),
+            cpp: TreeSitterLineHighlighter::new(
+                tree_sitter_cpp::LANGUAGE.into(),
+                tree_sitter_cpp::HIGHLIGHT_QUERY,
+            ),
+            lua: TreeSitterLineHighlighter::new(
+                tree_sitter_lua::LANGUAGE.into(),
+                tree_sitter_lua::HIGHLIGHTS_QUERY,
             ),
             fallback: PlainHighlighter,
         }
@@ -90,6 +125,29 @@ impl Highlighter for SimpleTreeSitterHighlighter {
             Some("md" | "markdown") => markdown_heuristic(line)
                 .or_else(|| run_tree_sitter(&mut self.markdown, line, language_hint))
                 .unwrap_or_default(),
+            Some("json") => {
+                run_tree_sitter(&mut self.json, line, language_hint).unwrap_or_default()
+            }
+            Some("sh" | "bash" | "zsh") => run_tree_sitter(&mut self.bash, line, language_hint)
+                .filter(|spans| !spans.is_empty())
+                .unwrap_or_else(|| bash_heuristic(line)),
+            Some("html" | "htm") => {
+                run_tree_sitter(&mut self.html, line, language_hint).unwrap_or_default()
+            }
+            Some("css" | "scss" | "less") => run_tree_sitter(&mut self.css, line, language_hint)
+                .filter(|spans| !spans.is_empty())
+                .unwrap_or_else(|| css_heuristic(line)),
+            Some("c" | "h") => run_tree_sitter(&mut self.c, line, language_hint)
+                .filter(|spans| !spans.is_empty())
+                .unwrap_or_else(|| c_like_heuristic(line)),
+            Some("cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx") => {
+                run_tree_sitter(&mut self.cpp, line, language_hint)
+                    .filter(|spans| !spans.is_empty())
+                    .unwrap_or_else(|| c_like_heuristic(line))
+            }
+            Some("lua") => run_tree_sitter(&mut self.lua, line, language_hint)
+                .filter(|spans| !spans.is_empty())
+                .unwrap_or_else(|| lua_heuristic(line)),
             Some("toml") => toml_heuristic(line),
             Some("yaml" | "yml") => yaml_heuristic(line),
             _ => self.fallback.highlight_line(language_hint, line),
@@ -179,6 +237,111 @@ fn with_function_name_heuristic(
         spans.sort_by_key(|span| (span.start, span.end));
     }
     spans
+}
+
+fn lua_heuristic(line: &str) -> Vec<HighlightSpan> {
+    let trimmed = line.trim_start();
+    let leading = line.len() - trimmed.len();
+    for keyword in ["local", "function", "return", "if", "then", "end"] {
+        if trimmed.starts_with(keyword) {
+            return vec![HighlightSpan {
+                start: leading,
+                end: leading + keyword.len(),
+                style: style_for_capture("keyword"),
+            }];
+        }
+    }
+    Vec::new()
+}
+
+fn c_like_heuristic(line: &str) -> Vec<HighlightSpan> {
+    let mut spans = Vec::new();
+    for keyword in [
+        "int", "void", "return", "class", "struct", "public", "private",
+    ] {
+        let mut search_start = 0;
+        while let Some(offset) = line[search_start..].find(keyword) {
+            let start = search_start + offset;
+            let end = start + keyword.len();
+            let before_ok = start == 0
+                || !line[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+            let after_ok = end == line.len()
+                || !line[end..]
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+            if before_ok && after_ok {
+                spans.push(HighlightSpan {
+                    start,
+                    end,
+                    style: style_for_capture(if ["int", "void"].contains(&keyword) {
+                        "type.builtin"
+                    } else {
+                        "keyword"
+                    }),
+                });
+            }
+            search_start = end;
+        }
+    }
+    spans.sort_by_key(|span| (span.start, span.end));
+    spans
+}
+
+fn css_heuristic(line: &str) -> Vec<HighlightSpan> {
+    let mut spans = Vec::new();
+    if let Some(selector_end) = line.find('{') {
+        let selector = line[..selector_end].trim();
+        if !selector.is_empty() {
+            let start = line[..selector_end].find(selector).unwrap_or(0);
+            spans.push(HighlightSpan {
+                start,
+                end: start + selector.len(),
+                style: style_for_capture("type"),
+            });
+        }
+    }
+    if let Some(colon) = line.find(':') {
+        let property_start = line[..colon]
+            .rfind(|ch: char| ch == '{' || ch.is_whitespace())
+            .map(|idx| idx + 1)
+            .unwrap_or(0);
+        if property_start < colon {
+            spans.push(HighlightSpan {
+                start: property_start,
+                end: colon,
+                style: style_for_capture("property"),
+            });
+        }
+    }
+    spans
+}
+
+fn bash_heuristic(line: &str) -> Vec<HighlightSpan> {
+    let trimmed = line.trim_start();
+    let leading = line.len() - trimmed.len();
+    if trimmed.starts_with('#') {
+        return vec![HighlightSpan {
+            start: leading,
+            end: line.len(),
+            style: style_for_capture("comment"),
+        }];
+    }
+    for keyword in [
+        "if", "then", "else", "elif", "fi", "for", "while", "do", "done",
+    ] {
+        if trimmed.starts_with(keyword) {
+            return vec![HighlightSpan {
+                start: leading,
+                end: leading + keyword.len(),
+                style: style_for_capture("keyword"),
+            }];
+        }
+    }
+    Vec::new()
 }
 
 fn toml_heuristic(line: &str) -> Vec<HighlightSpan> {

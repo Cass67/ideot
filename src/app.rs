@@ -204,26 +204,22 @@ impl App {
 
     pub fn insert_char(&mut self, ch: char) {
         if let Some(editor) = &mut self.editor {
-            editor.insert_char(ch);
-            if let (Some(relative), Some(path)) =
-                (self.current_relative.as_ref(), editor.buffer().path())
-            {
-                let path = path.to_path_buf();
-                let text = editor.buffer().text().to_string();
-                self.lsp_change(&path, text);
-                self.recent.record(relative.clone());
-            }
+            editor.edit_insert_text(ch.to_string(), "insert");
+            self.after_current_editor_changed();
+        }
+    }
+
+    pub fn insert_newline(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.edit_insert_text("\n".to_string(), "insert");
+            self.after_current_editor_changed();
         }
     }
 
     pub fn backspace(&mut self) {
         if let Some(editor) = &mut self.editor {
-            editor.backspace();
-            if let Some(path) = editor.buffer().path() {
-                let path = path.to_path_buf();
-                let text = editor.buffer().text().to_string();
-                self.lsp_change(&path, text);
-            }
+            editor.edit_backspace();
+            self.after_current_editor_changed();
         }
     }
 
@@ -252,6 +248,21 @@ impl App {
     fn lsp_save(&self, path: &std::path::Path, text: String) {
         if let Some(lsp) = &self.lsp {
             lsp.did_save(&self.lsp_uri(path), &text);
+        }
+    }
+
+    fn after_current_editor_changed(&mut self) {
+        let editor_change = self.editor.as_ref().and_then(|editor| {
+            editor
+                .buffer()
+                .path()
+                .map(|path| (path.to_path_buf(), editor.buffer().text().to_string()))
+        });
+        if let Some((path, text)) = editor_change {
+            self.lsp_change(&path, text);
+        }
+        if let Some(relative) = self.current_relative.as_ref() {
+            self.recent.record(relative.clone());
         }
     }
 
@@ -368,14 +379,14 @@ impl App {
     pub fn focused_arrow_down(&mut self) {
         match self.focus_pane {
             FocusPane::Explorer => self.move_selection_down(),
-            FocusPane::Editor => self.scroll_editor_down(),
+            FocusPane::Editor => self.page_editor_down(1),
         }
     }
 
     pub fn focused_arrow_up(&mut self) {
         match self.focus_pane {
             FocusPane::Explorer => self.move_selection_up(),
-            FocusPane::Editor => self.scroll_editor_up(),
+            FocusPane::Editor => self.page_editor_up(1),
         }
     }
 
@@ -436,6 +447,25 @@ impl App {
                 column,
             });
         }
+    }
+
+    pub fn move_editor_cursor_to(&mut self, position: Position) {
+        self.focus_pane = FocusPane::Editor;
+        if let Some(editor) = &mut self.editor {
+            editor.set_cursor(position);
+            editor.clear_selection();
+        }
+    }
+
+    pub fn update_editor_selection(&mut self, anchor: Position, end: Position) {
+        self.focus_pane = FocusPane::Editor;
+        if let Some(editor) = &mut self.editor {
+            editor.set_selection(anchor, end);
+        }
+    }
+
+    pub fn finish_editor_selection(&mut self) {
+        self.status = "selection ready".to_string();
     }
 
     pub fn toggle_search(&mut self) {
@@ -805,11 +835,189 @@ impl App {
     }
 
     pub fn page_editor_down(&mut self, amount: usize) {
-        self.editor_scroll += amount;
+        if let Some(editor) = &mut self.editor {
+            for _ in 0..amount {
+                editor.move_down();
+            }
+            self.editor_scroll = editor.cursor().line;
+        }
     }
 
     pub fn page_editor_up(&mut self, amount: usize) {
-        self.editor_scroll = self.editor_scroll.saturating_sub(amount);
+        if let Some(editor) = &mut self.editor {
+            for _ in 0..amount {
+                editor.move_up();
+            }
+            self.editor_scroll = editor.cursor().line;
+        }
+    }
+
+    /// Adjust editor scroll so the cursor line stays visible
+    pub fn scroll_to_cursor(&mut self, visible_height: usize) {
+        let Some(editor) = &self.editor else { return };
+        let cursor_line = editor.cursor().line;
+        // If cursor is below visible area, scroll down
+        if cursor_line >= self.editor_scroll + visible_height {
+            self.editor_scroll = cursor_line - visible_height + 1;
+        }
+        // If cursor is above visible area, scroll up
+        if cursor_line < self.editor_scroll {
+            self.editor_scroll = cursor_line;
+        }
+    }
+
+    pub fn editor_move_down(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_down();
+        }
+    }
+
+    pub fn editor_move_up(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_up();
+        }
+    }
+
+    pub fn editor_move_left(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_left();
+        }
+    }
+
+    pub fn editor_move_right(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_right();
+        }
+    }
+
+    // --- Copy / Paste ---
+
+    pub fn copy_selection(&mut self) -> Result<()> {
+        let Some(editor) = &mut self.editor else {
+            bail!("no open file");
+        };
+        let text = editor.selected_text();
+        if text.is_empty() {
+            bail!("nothing selected");
+        }
+        let line_count = text.matches('\n').count() + 1;
+        let char_count = text.chars().count();
+        let mut clipboard = arboard::Clipboard::new().context("failed to open clipboard")?;
+        clipboard.set_text(text)?;
+        self.status = if line_count > 1 {
+            format!("copied {line_count} lines")
+        } else {
+            format!("copied {char_count} chars")
+        };
+        Ok(())
+    }
+
+    pub fn select_all(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.select_all();
+            self.status = "selected all".to_string();
+        }
+    }
+
+    pub fn undo(&mut self) {
+        let Some(editor) = &mut self.editor else {
+            self.status = "no open file".to_string();
+            return;
+        };
+        match editor.undo() {
+            Some(label) => {
+                self.status = format!("undid {label}");
+                self.after_current_editor_changed();
+            }
+            None => self.status = "nothing to undo".to_string(),
+        }
+    }
+
+    pub fn redo(&mut self) {
+        let Some(editor) = &mut self.editor else {
+            self.status = "no open file".to_string();
+            return;
+        };
+        match editor.redo() {
+            Some(label) => {
+                self.status = format!("redid {label}");
+                self.after_current_editor_changed();
+            }
+            None => self.status = "nothing to redo".to_string(),
+        }
+    }
+
+    pub fn paste(&mut self) -> Result<()> {
+        let mut clipboard = arboard::Clipboard::new().context("failed to open clipboard")?;
+        let text = clipboard.get_text()?;
+        self.insert_pasted_text(text);
+        Ok(())
+    }
+
+    pub fn insert_pasted_text(&mut self, text: String) {
+        let Some(editor) = &mut self.editor else {
+            self.status = "no open file".to_string();
+            return;
+        };
+        let line_count = text.matches('\n').count() + 1;
+        let char_count = text.chars().count();
+        if editor.selection().is_some() {
+            editor.edit_replace_selection(text, "paste");
+        } else {
+            editor.edit_insert_text(text, "paste");
+        }
+        self.after_current_editor_changed();
+        self.status = if line_count > 1 {
+            format!("pasted {line_count} lines")
+        } else {
+            format!("pasted {char_count} chars")
+        };
+    }
+
+    pub fn extend_selection_left(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            if editor.selection().is_none() {
+                editor.start_selection();
+            }
+            editor.move_left();
+            editor.extend_selection_to();
+        }
+    }
+
+    pub fn extend_selection_right(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            if editor.selection().is_none() {
+                editor.start_selection();
+            }
+            editor.move_right();
+            editor.extend_selection_to();
+        }
+    }
+
+    pub fn extend_selection_up(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            if editor.selection().is_none() {
+                editor.start_selection();
+            }
+            editor.move_up();
+            editor.extend_selection_to();
+        }
+    }
+
+    pub fn extend_selection_down(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            if editor.selection().is_none() {
+                editor.start_selection();
+            }
+            editor.move_down();
+            editor.extend_selection_to();
+        }
+    }
+
+    pub fn clear_selection(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.clear_selection();
+        }
     }
 }
 

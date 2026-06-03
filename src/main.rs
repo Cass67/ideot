@@ -2,14 +2,15 @@ use anyhow::Result;
 use crossterm::{
     cursor::SetCursorStyle,
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
-        MouseEventKind,
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ideot::{
     app::{App, FocusPane},
+    input::{EditorViewport, MouseAction, MouseInputController},
     ui,
 };
 use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
@@ -26,6 +27,7 @@ fn main() -> Result<()> {
         stdout,
         EnterAlternateScreen,
         EnableMouseCapture,
+        EnableBracketedPaste,
         SetCursorStyle::SteadyBar
     )?;
     let backend = CrosstermBackend::new(stdout);
@@ -36,6 +38,7 @@ fn main() -> Result<()> {
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
+        DisableBracketedPaste,
         DisableMouseCapture,
         LeaveAlternateScreen,
         SetCursorStyle::DefaultUserShape
@@ -45,6 +48,7 @@ fn main() -> Result<()> {
 }
 
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
+    let mut mouse_input = MouseInputController::default();
     loop {
         terminal.draw(|frame| ui::render(frame, app))?;
         if app.should_quit {
@@ -113,13 +117,74 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     app.page_explorer_up(terminal.size()?.height.saturating_sub(4) as usize)
                 }
                 (_, KeyCode::PageDown) => {
-                    app.page_editor_down(terminal.size()?.height.saturating_sub(4) as usize)
+                    let vh = terminal
+                        .size()
+                        .map(|s| s.height.saturating_sub(4) as usize)
+                        .unwrap_or(20);
+                    app.page_editor_down(vh);
+                    app.scroll_to_cursor(vh);
                 }
                 (_, KeyCode::PageUp) => {
-                    app.page_editor_up(terminal.size()?.height.saturating_sub(4) as usize)
+                    let vh = terminal
+                        .size()
+                        .map(|s| s.height.saturating_sub(4) as usize)
+                        .unwrap_or(20);
+                    app.page_editor_up(vh);
+                    app.scroll_to_cursor(vh);
+                }
+                // Selection: Shift + arrows (must be before plain arrows)
+                (KeyModifiers::SHIFT, KeyCode::Left) => app.extend_selection_left(),
+                (KeyModifiers::SHIFT, KeyCode::Right) => app.extend_selection_right(),
+                (KeyModifiers::SHIFT, KeyCode::Up) => app.extend_selection_up(),
+                (KeyModifiers::SHIFT, KeyCode::Down) => app.extend_selection_down(),
+                // Copy selection (Ctrl+Shift+C)
+                (KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('c')) => {
+                    let _ = app.copy_selection();
+                }
+                // Paste (Ctrl+V or Shift+Insert)
+                (KeyModifiers::CONTROL, KeyCode::Char('v'))
+                | (KeyModifiers::SHIFT, KeyCode::Insert) => {
+                    let _ = app.paste();
+                }
+                (KeyModifiers::CONTROL, KeyCode::Char('a')) => app.select_all(),
+                (_, KeyCode::Char('U')) => app.undo(),
+                (KeyModifiers::CONTROL, KeyCode::Char('r')) => app.redo(),
+                // Escape clears selection
+                (_, KeyCode::Esc) if app.editor().and_then(|e| e.selection()).is_some() => {
+                    app.clear_selection();
+                }
+                (_, KeyCode::Down) if app.focus_pane() == FocusPane::Editor => {
+                    let vh = terminal
+                        .size()
+                        .map(|s| s.height.saturating_sub(4) as usize)
+                        .unwrap_or(20);
+                    app.editor_move_down();
+                    app.scroll_to_cursor(vh);
+                }
+                (_, KeyCode::Up) if app.focus_pane() == FocusPane::Editor => {
+                    let vh = terminal
+                        .size()
+                        .map(|s| s.height.saturating_sub(4) as usize)
+                        .unwrap_or(20);
+                    app.editor_move_up();
+                    app.scroll_to_cursor(vh);
+                }
+                (_, KeyCode::Left) if app.focus_pane() == FocusPane::Editor => {
+                    app.editor_move_left();
+                }
+                (_, KeyCode::Right) if app.focus_pane() == FocusPane::Editor => {
+                    app.editor_move_right();
                 }
                 (_, KeyCode::Down) => app.focused_arrow_down(),
                 (_, KeyCode::Up) => app.focused_arrow_up(),
+                (_, KeyCode::Enter) if app.focus_pane() == FocusPane::Editor => {
+                    let vh = terminal
+                        .size()
+                        .map(|s| s.height.saturating_sub(4) as usize)
+                        .unwrap_or(20);
+                    app.insert_newline();
+                    app.scroll_to_cursor(vh);
+                }
                 (_, KeyCode::Enter) => {
                     let _ = app.activate_selected();
                 }
@@ -153,14 +218,42 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                         }
                     }
                 }
+                (_, KeyCode::Char('Y')) => {
+                    let _ = app.copy_selection();
+                }
                 (_, KeyCode::Char(ch)) => app.insert_char(ch),
                 _ => {}
             },
+            Event::Paste(text) => {
+                app.insert_pasted_text(text);
+            }
             Event::Mouse(mouse) => {
                 let size = terminal.size()?;
                 let explorer_width = size.width * 30 / 100;
                 let content_height = size.height.saturating_sub(1);
                 let in_content_rows = mouse.row > 0 && mouse.row < content_height.saturating_sub(1);
+                let editor_x = explorer_width.saturating_add(1);
+                let editor_height = content_height.saturating_sub(1);
+                let editor_viewport = EditorViewport {
+                    x: editor_x,
+                    y: 1,
+                    width: size.width.saturating_sub(editor_x),
+                    height: editor_height,
+                    scroll: app.editor_scroll(),
+                };
+                let visible_lines: Vec<String> = app
+                    .editor()
+                    .map(|editor| {
+                        editor
+                            .buffer()
+                            .lines()
+                            .iter()
+                            .skip(app.editor_scroll())
+                            .take(editor_height as usize)
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left)
                         if app.git_view() == Some(ideot::app::GitView::Diff) =>
@@ -179,9 +272,31 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     MouseEventKind::Down(MouseButton::Left)
                         if mouse.column > explorer_width && in_content_rows =>
                     {
-                        let row = mouse.row.saturating_sub(1) as usize;
-                        let column = mouse.column.saturating_sub(explorer_width + 1) as usize;
-                        app.place_editor_cursor(row, column);
+                        if let Some(action) = mouse_input.left_down(
+                            mouse.column,
+                            mouse.row,
+                            &editor_viewport,
+                            &visible_lines,
+                        ) {
+                            apply_mouse_action(app, action, editor_height as usize);
+                        }
+                    }
+                    MouseEventKind::Drag(MouseButton::Left)
+                        if mouse.column > explorer_width && in_content_rows =>
+                    {
+                        if let Some(action) = mouse_input.drag(
+                            mouse.column,
+                            mouse.row,
+                            &editor_viewport,
+                            &visible_lines,
+                        ) {
+                            apply_mouse_action(app, action, editor_height as usize);
+                        }
+                    }
+                    MouseEventKind::Up(MouseButton::Left) => {
+                        if let Some(action) = mouse_input.left_up() {
+                            apply_mouse_action(app, action, editor_height as usize);
+                        }
                     }
                     MouseEventKind::ScrollDown
                         if app.git_view() == Some(ideot::app::GitView::Diff) =>
@@ -211,6 +326,15 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
         app.poll_lsp();
     }
     Ok(())
+}
+
+fn apply_mouse_action(app: &mut App, action: MouseAction, visible_height: usize) {
+    match action {
+        MouseAction::MoveCursor(position) => app.move_editor_cursor_to(position),
+        MouseAction::UpdateSelection { anchor, end } => app.update_editor_selection(anchor, end),
+        MouseAction::FinishSelection => app.finish_editor_selection(),
+    }
+    app.scroll_to_cursor(visible_height);
 }
 
 fn git_overlay_area(width: u16, height: u16) -> Rect {

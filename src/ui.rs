@@ -112,7 +112,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     let shortcuts = if app.git_view().is_some() {
         "Git: Enter Select · Esc Back · Up/Down/Page Move · Tab Diff View · F1 Help"
     } else {
-        "Tab Focus · Ctrl-N New · Ctrl-S Save · Ctrl-D Delete · Ctrl-P Search · Ctrl-G Git · F1 Help · Ctrl-Q Quit"
+        "Tab Focus · Arrows Nav · Drag Select · Ctrl-A All · Y Copy · Ctrl-V Paste · U Undo · Ctrl-R Redo · Ctrl-P Search · Ctrl-G Git · F1 Help · Ctrl-Q Quit"
     };
     frame.render_widget(Paragraph::new(shortcuts), footer[0]);
     let status = app.current_relative().unwrap_or("no file");
@@ -323,17 +323,27 @@ fn render_help_overlay(frame: &mut Frame) {
     let help = vec![
         Line::from("Keyboard"),
         Line::from("  Ctrl-P       Search files"),
-        Line::from("  Enter/Space  Open file or expand/collapse folder"),
+        Line::from("  Arrows       Move cursor in editor"),
+        Line::from("  Enter        New line (editor) / Open file (explorer)"),
+        Line::from("  Space        Open file (explorer)"),
         Line::from("  Ctrl-S       Save current file"),
         Line::from("  Ctrl-M       Mark current file"),
         Line::from("  Ctrl-1..9    Jump to mark"),
         Line::from("  Ctrl-G       Git commit browser"),
+        Line::from("  Shift+Arrows Select text"),
+        Line::from("  Ctrl-A       Select all text in current file"),
+        Line::from("  Y            Copy selection"),
+        Line::from("  Ctrl+V       Paste"),
+        Line::from("  U            Undo"),
+        Line::from("  Ctrl-R       Redo"),
         Line::from("  F1/Esc       Toggle this help"),
         Line::from("  Ctrl-Q       Quit"),
         Line::from(""),
         Line::from("Mouse"),
         Line::from("  Click tree row     Open file or toggle folder"),
         Line::from("  Click editor pane  Move cursor"),
+        Line::from("  Drag editor text  Select text in ideot"),
+        Line::from("  Modifier-drag     Terminal-native selection escape hatch"),
         Line::from("  Wheel              Scroll hovered pane"),
     ];
     frame.render_widget(Clear, area);
@@ -364,44 +374,136 @@ pub fn highlighted_editor_lines_for_height(app: &App, height: usize) -> Vec<Line
         )];
     };
     let mut highlighter = SimpleTreeSitterHighlighter::default();
+    let selection = editor.selection();
+    let scroll = app.editor_scroll();
     editor
         .buffer()
         .lines()
         .iter()
+        .enumerate()
         .skip(app.editor_scroll())
         .take(height)
-        .map(|line| highlighted_line(&mut highlighter, app.language_hint(), line))
+        .map(|(line_idx, line)| {
+            let visible_line = line_idx - scroll;
+            highlighted_line_with_selection(
+                &mut highlighter,
+                app.language_hint(),
+                line,
+                line_idx,
+                visible_line,
+                selection,
+            )
+        })
         .collect()
 }
 
-fn highlighted_line(
+fn highlighted_line_with_selection(
     highlighter: &mut dyn Highlighter,
     language_hint: Option<&str>,
     line: &str,
+    line_idx: usize,
+    _visible_line: usize,
+    selection: Option<crate::editor::Selection>,
 ) -> Line<'static> {
     let spans = highlighter.highlight_line(language_hint, line);
-    if spans.is_empty() {
+    if spans.is_empty() && selection.is_none() {
         return Line::from(line.to_string());
     }
 
+    // Calculate selection range for this line
+    let sel_start = selection.and_then(|s| {
+        let (start, end) = s.bounds();
+        if line_idx >= start.line && line_idx <= end.line {
+            Some((
+                if line_idx == start.line {
+                    start.column
+                } else {
+                    0
+                },
+                if line_idx == end.line {
+                    end.column
+                } else {
+                    line.len()
+                },
+            ))
+        } else {
+            None
+        }
+    });
+
     let mut rendered = Vec::new();
     let mut cursor = 0;
-    for span in spans {
-        if span.start < cursor || span.end > line.len() || span.start >= span.end {
-            continue;
-        }
-        if span.start > cursor {
-            rendered.push(Span::raw(line[cursor..span.start].to_string()));
-        }
-        rendered.push(Span::styled(
-            line[span.start..span.end].to_string(),
-            span.style,
-        ));
-        cursor = span.end;
+
+    // Collect all spans (syntax + selection) and sort by position
+    struct SpanInfo {
+        start: usize,
+        end: usize,
+        style: Style,
     }
-    if cursor < line.len() {
-        rendered.push(Span::raw(line[cursor..].to_string()));
+
+    let mut all_spans: Vec<SpanInfo> = spans
+        .into_iter()
+        .filter(|s| s.start < line.len() && s.end <= line.len() && s.start < s.end)
+        .map(|s| SpanInfo {
+            start: s.start,
+            end: s.end,
+            style: s.style,
+        })
+        .collect();
+
+    // Add selection span
+    if let Some((sel_start, sel_end)) = sel_start {
+        if sel_start < sel_end {
+            all_spans.push(SpanInfo {
+                start: sel_start,
+                end: sel_end.min(line.len()),
+                style: Style::default().bg(Color::Blue).fg(Color::White),
+            });
+        }
     }
+
+    // Sort by start position
+    all_spans.sort_by_key(|s| s.start);
+
+    // Render with selection override
+    if let Some((sel_start, sel_end)) = sel_start {
+        let sel_start = sel_start.min(line.len());
+        let sel_end = sel_end.min(line.len());
+
+        // Part before selection
+        if sel_start > 0 {
+            rendered.push(Span::raw(line[0..sel_start].to_string()));
+        }
+
+        // Selection part
+        if sel_start < sel_end {
+            rendered.push(Span::styled(
+                line[sel_start..sel_end].to_string(),
+                Style::default().bg(Color::Blue).fg(Color::White),
+            ));
+        }
+
+        // Part after selection
+        if sel_end < line.len() {
+            rendered.push(Span::raw(line[sel_end..].to_string()));
+        }
+    } else {
+        // No selection, just syntax highlighting
+        for span in &all_spans {
+            if span.start > cursor {
+                rendered.push(Span::raw(line[cursor..span.start].to_string()));
+            }
+            rendered.push(Span::styled(
+                line[span.start..span.end].to_string(),
+                span.style,
+            ));
+            cursor = span.end;
+        }
+        if cursor < line.len() {
+            rendered.push(Span::raw(line[cursor..].to_string()));
+        }
+    }
+
     Line::from(rendered)
 }
 

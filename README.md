@@ -38,14 +38,22 @@ Binary path: `target/release/ideot`
 
 | Key | Action |
 |---|---|
-| `Up` / `Down` | Navigate file explorer |
-| `Enter` | Open selected file |
+| `Up` / `Down` | Navigate focused pane |
+| `Mouse drag` | Select editor text inside ideot |
+| terminal modifier drag | Use terminal-native selection escape hatch |
+| `Shift+Arrows` | Extend text selection |
+| `Ctrl-A` | Select all text in the current editor buffer |
+| `Y` / `Ctrl-Shift-C` | Copy selection to system clipboard |
+| `Ctrl-V` | Paste from system clipboard |
+| `U` | Undo last edit |
+| `Ctrl-R` | Redo last undone edit |
+| `Enter` | Open selected file / insert newline in editor |
 | `Ctrl-S` | Save current file |
 | `Ctrl-P` | Open fuzzy file search |
 | `Ctrl-G` | Open git commit browser |
 | `Ctrl-M` | Mark current file |
 | `Ctrl-1` .. `Ctrl-9` | Jump to mark 1-9 |
-| `Ctrl-/` | Toggle focus between explorer and editor |
+| `Tab` | Toggle focus between explorer and editor |
 | `Ctrl-Q` | Quit |
 | `F1` | Toggle help overlay |
 

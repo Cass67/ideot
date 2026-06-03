@@ -63,3 +63,52 @@ fn editor_tracks_cursor_while_editing() {
     assert_eq!(editor.buffer().line(0), Some("abXc"));
     assert_eq!(editor.cursor(), Position { line: 0, column: 3 });
 }
+
+#[test]
+fn replace_text_replaces_entire_buffer_and_marks_dirty() {
+    let mut buffer = Buffer::from_text("old\ntext".to_string());
+
+    buffer.replace_text("new\nfile".to_string());
+
+    assert_eq!(buffer.line_count(), 2);
+    assert_eq!(buffer.line(0), Some("new"));
+    assert_eq!(buffer.line(1), Some("file"));
+    assert_eq!(buffer.text(), "new\nfile");
+    assert!(buffer.is_dirty());
+}
+
+#[test]
+fn insert_text_at_position_handles_multiline_text() {
+    let mut buffer = Buffer::from_text("hello world".to_string());
+
+    let end = buffer.insert_text(Position { line: 0, column: 5 }, "\nsmall\n".to_string());
+
+    assert_eq!(buffer.text(), "hello\nsmall\n world");
+    assert_eq!(end, Position { line: 2, column: 0 });
+    assert!(buffer.is_dirty());
+}
+
+#[test]
+fn insert_text_normalizes_carriage_return_line_endings() {
+    let mut buffer = Buffer::from_text("start end".to_string());
+
+    let end = buffer.insert_text(Position { line: 0, column: 5 }, "a\rb\r\nc".to_string());
+
+    assert_eq!(buffer.text(), "starta\nb\nc end");
+    assert_eq!(end, Position { line: 2, column: 1 });
+}
+
+#[test]
+fn buffer_editing_snaps_non_char_boundary_columns() {
+    let mut buffer = Buffer::from_text("√Clone".to_string());
+
+    let end = buffer.insert_text(Position { line: 0, column: 2 }, "X".to_string());
+    assert_eq!(buffer.text(), "√XClone");
+    assert_eq!(end, Position { line: 0, column: 4 });
+
+    buffer.insert_newline(Position { line: 0, column: 4 });
+    assert_eq!(buffer.text(), "√X\nClone");
+
+    buffer.delete_char_before(Position { line: 0, column: 2 });
+    assert_eq!(buffer.text(), "X\nClone");
+}

@@ -4,6 +4,7 @@ pub mod editor;
 pub mod fs;
 pub mod git;
 pub mod highlight;
+pub mod input;
 pub mod lsp;
 pub mod marks;
 pub mod search;

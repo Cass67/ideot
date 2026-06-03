@@ -109,12 +109,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(root[1]);
-    let shortcuts = if app.git_view().is_some() {
-        "Git: Enter Select · Esc Back · Up/Down/Page Move · Tab Diff View · F1 Help"
-    } else {
-        "Tab Focus · Arrows Nav · Drag Select · Ctrl-A All · Y Copy · Ctrl-V Paste · U Undo · Ctrl-R Redo · Ctrl-P Search · Ctrl-G Git · F1 Help · Ctrl-Q Quit"
-    };
-    frame.render_widget(Paragraph::new(shortcuts), footer[0]);
+    frame.render_widget(
+        Paragraph::new(footer_shortcuts(app.git_view().is_some())),
+        footer[0],
+    );
     let status = app.current_relative().unwrap_or("no file");
     frame.render_widget(Paragraph::new(status.to_string()), footer[1]);
 }
@@ -318,34 +316,64 @@ fn diff_line(text: &str, kind: DiffKind, before: bool, selected: bool) -> Line<'
     Line::from(Span::styled(text.to_string(), style))
 }
 
+pub fn footer_shortcuts(_git_open: bool) -> &'static str {
+    "F1 Help · Ctrl-Q Quit"
+}
+
+pub fn help_text_lines() -> Vec<&'static str> {
+    vec![
+        "Keyboard",
+        "  Tab          Toggle focus between explorer and editor",
+        "  Arrows       Navigate focused pane / move cursor in editor",
+        "  Page Up/Down Scroll focused pane",
+        "  Enter        New line (editor) / Open file (explorer/git)",
+        "  Space        Open file or toggle folder (explorer)",
+        "  Ctrl-S       Save current file",
+        "  Ctrl-Q       Quit",
+        "",
+        "Editing",
+        "  Shift+Arrows Select text",
+        "  Ctrl-A       Select all text in current file",
+        "  Y            Copy selection",
+        "  Ctrl+Shift+C Copy selection",
+        "  Ctrl+V       Paste",
+        "  U            Undo",
+        "  Ctrl-R       Redo",
+        "  Esc          Clear selection / close overlay",
+        "",
+        "Project",
+        "  Ctrl-P       Search files",
+        "  Ctrl-N       New file",
+        "  Ctrl-D       Delete file",
+        "  Ctrl-M       Mark current file",
+        "  Ctrl-1..9    Jump to mark",
+        "  Ctrl-G       Git commit browser",
+        "",
+        "Git Browser",
+        "  Enter        Select commit/file",
+        "  Tab          Toggle split/unified diff",
+        "  Esc          Back/close git browser",
+        "",
+        "LSP",
+        "  Ctrl-H       LSP hover",
+        "  Ctrl-/       LSP completion",
+        "  Ctrl-]       LSP go to definition",
+        "",
+        "Mouse",
+        "  Click tree row     Open file or toggle folder",
+        "  Click editor pane  Move cursor",
+        "  Drag editor text  Select text in ideot",
+        "  Modifier-drag     Terminal-native selection escape hatch",
+        "  Wheel              Scroll hovered pane",
+        "",
+        "Footer",
+        "  F1 Help      Show this command reference",
+    ]
+}
+
 fn render_help_overlay(frame: &mut Frame) {
-    let area = centered_rect(70, 55, frame.area());
-    let help = vec![
-        Line::from("Keyboard"),
-        Line::from("  Ctrl-P       Search files"),
-        Line::from("  Arrows       Move cursor in editor"),
-        Line::from("  Enter        New line (editor) / Open file (explorer)"),
-        Line::from("  Space        Open file (explorer)"),
-        Line::from("  Ctrl-S       Save current file"),
-        Line::from("  Ctrl-M       Mark current file"),
-        Line::from("  Ctrl-1..9    Jump to mark"),
-        Line::from("  Ctrl-G       Git commit browser"),
-        Line::from("  Shift+Arrows Select text"),
-        Line::from("  Ctrl-A       Select all text in current file"),
-        Line::from("  Y            Copy selection"),
-        Line::from("  Ctrl+V       Paste"),
-        Line::from("  U            Undo"),
-        Line::from("  Ctrl-R       Redo"),
-        Line::from("  F1/Esc       Toggle this help"),
-        Line::from("  Ctrl-Q       Quit"),
-        Line::from(""),
-        Line::from("Mouse"),
-        Line::from("  Click tree row     Open file or toggle folder"),
-        Line::from("  Click editor pane  Move cursor"),
-        Line::from("  Drag editor text  Select text in ideot"),
-        Line::from("  Modifier-drag     Terminal-native selection escape hatch"),
-        Line::from("  Wheel              Scroll hovered pane"),
-    ];
+    let area = centered_rect(70, 70, frame.area());
+    let help: Vec<Line> = help_text_lines().into_iter().map(Line::from).collect();
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(help).block(Block::default().title("help").borders(Borders::ALL)),

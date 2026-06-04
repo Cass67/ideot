@@ -174,7 +174,12 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     let slot = ch.to_digit(10).unwrap() as usize;
                     let _ = app.jump_to_mark(slot);
                 }
+                (_, KeyCode::Esc) if app.search_open() => app.close_search(),
+                (_, KeyCode::Esc) if app.file_prompt().is_some() => app.cancel_file_prompt(),
                 (_, KeyCode::Esc) if app.git_view().is_some() => app.git_back(),
+                (_, KeyCode::Esc) if app.focus_pane() == FocusPane::Explorer => {
+                    app.collapse_selected_directory();
+                }
                 (_, KeyCode::Tab) if app.git_view() == Some(ideot::app::GitView::Diff) => {
                     app.toggle_git_diff_layout()
                 }
@@ -190,8 +195,23 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (_, KeyCode::Enter) if app.git_view().is_some() => {
                     let _ = app.activate_git_selection();
                 }
-                (_, KeyCode::Esc) if app.search_open() => app.close_search(),
-                (_, KeyCode::Esc) if app.file_prompt().is_some() => app.cancel_file_prompt(),
+                (_, KeyCode::Down) if app.search_open() => app.move_selection_down(),
+                (_, KeyCode::Up) if app.search_open() => app.move_selection_up(),
+                (_, KeyCode::PageDown) if app.search_open() => {
+                    let amount = terminal.size()?.height.saturating_sub(8) as usize;
+                    for _ in 0..amount.max(1) {
+                        app.move_selection_down();
+                    }
+                }
+                (_, KeyCode::PageUp) if app.search_open() => {
+                    let amount = terminal.size()?.height.saturating_sub(8) as usize;
+                    for _ in 0..amount.max(1) {
+                        app.move_selection_up();
+                    }
+                }
+                (_, KeyCode::Enter) if app.search_open() => {
+                    let _ = app.activate_selected();
+                }
                 (_, KeyCode::Enter) if app.file_prompt().is_some() => {
                     let _ = app.submit_file_prompt();
                 }

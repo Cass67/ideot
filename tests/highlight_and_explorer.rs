@@ -284,6 +284,29 @@ fn arrow_scroll_respects_focused_pane() {
 }
 
 #[test]
+fn escape_can_collapse_selected_expanded_directory() {
+    let dir = tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+    std::fs::write(dir.path().join("src/main.rs"), "fn main() {}").unwrap();
+    std::fs::write(dir.path().join("src/nested/lib.rs"), "").unwrap();
+
+    let mut app = App::new(dir.path().to_path_buf());
+    app.rebuild_index().unwrap();
+    app.activate_selected().unwrap();
+    assert!(app
+        .explorer_entries()
+        .iter()
+        .any(|entry| entry.label.contains("main.rs")));
+
+    app.collapse_selected_directory();
+
+    assert!(!app
+        .explorer_entries()
+        .iter()
+        .any(|entry| entry.label.contains("main.rs")));
+}
+
+#[test]
 fn page_scroll_moves_explorer_and_editor_by_requested_amount() {
     let dir = tempdir().unwrap();
     std::fs::write(

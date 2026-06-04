@@ -14,6 +14,7 @@ use crate::settings::Settings;
 use anyhow::{bail, Context, Result};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 fn lsp_language_id(extension: &str) -> &str {
     match extension.trim_start_matches('.') {
@@ -123,6 +124,14 @@ pub struct App {
     file_prompt: FilePromptState,
     focus_pane: FocusPane,
     git: GitBrowserState,
+    pending_lsp_change: Option<PendingLspChange>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingLspChange {
+    path: PathBuf,
+    text: String,
+    due_at: Instant,
 }
 
 impl App {
@@ -165,6 +174,7 @@ impl App {
             file_prompt: FilePromptState::default(),
             focus_pane: FocusPane::Explorer,
             git: GitBrowserState::default(),
+            pending_lsp_change: None,
         }
     }
 
@@ -316,11 +326,16 @@ impl App {
     }
 
     pub fn save_current(&mut self) -> Result<()> {
-        let editor = self.editor.as_mut().context("no open file")?;
-        editor.buffer_mut().save()?;
-        if let Some(path) = editor.buffer().path() {
-            let path = path.to_path_buf();
-            let text = editor.buffer().text().to_string();
+        let save_event = {
+            let editor = self.editor.as_mut().context("no open file")?;
+            editor.buffer_mut().save()?;
+            editor
+                .buffer()
+                .path()
+                .map(|path| (path.to_path_buf(), editor.buffer().text().to_string()))
+        };
+        self.flush_lsp_change_now();
+        if let Some((path, text)) = save_event {
             self.lsp_save(&path, text);
         }
         self.status = "saved".to_string();
@@ -340,6 +355,35 @@ impl App {
         }
     }
 
+    fn schedule_lsp_change(&mut self, path: PathBuf, text: String) {
+        if !self.settings.lsp_enabled || self.lsp.is_none() {
+            return;
+        }
+        self.pending_lsp_change = Some(PendingLspChange {
+            path,
+            text,
+            due_at: Instant::now() + Duration::from_millis(150),
+        });
+    }
+
+    fn flush_lsp_change_if_due(&mut self) -> bool {
+        let Some(change) = self.pending_lsp_change.as_ref() else {
+            return false;
+        };
+        if Instant::now() < change.due_at {
+            return false;
+        }
+        self.flush_lsp_change_now()
+    }
+
+    fn flush_lsp_change_now(&mut self) -> bool {
+        let Some(change) = self.pending_lsp_change.take() else {
+            return false;
+        };
+        self.lsp_change(&change.path, change.text);
+        true
+    }
+
     fn lsp_save(&self, path: &std::path::Path, text: String) {
         if !self.settings.lsp_enabled {
             return;
@@ -357,7 +401,7 @@ impl App {
                 .map(|path| (path.to_path_buf(), editor.buffer().text().to_string()))
         });
         if let Some((path, text)) = editor_change {
-            self.lsp_change(&path, text);
+            self.schedule_lsp_change(path, text);
         }
         if let Some(relative) = self.current_relative.as_ref() {
             self.recent.record(relative.clone());
@@ -368,13 +412,14 @@ impl App {
         if !self.settings.lsp_enabled {
             return false;
         }
+        let changed = self.flush_lsp_change_if_due();
         let mut messages = Vec::new();
         if let Some(lsp) = &self.lsp {
             while let Some(msg) = lsp.poll() {
                 messages.push(msg);
             }
         }
-        let received = !messages.is_empty();
+        let received = changed || !messages.is_empty();
         for msg in messages {
             self.apply_lsp_message(msg);
         }
@@ -691,6 +736,22 @@ impl App {
         let index = self.explorer_scroll + row;
         self.selected_file = index.min(self.explorer_entries().len().saturating_sub(1));
         self.activate_explorer_index(index)
+    }
+
+    pub fn collapse_selected_directory(&mut self) {
+        let Some(entry) = self.explorer_entries().get(self.selected_file).cloned() else {
+            return;
+        };
+        if !entry.is_dir {
+            return;
+        }
+        let dir = entry
+            .label
+            .trim_start()
+            .trim_start_matches(['▾', '▸'])
+            .trim()
+            .to_string();
+        self.expanded_dirs.remove(&dir);
     }
 
     fn activate_explorer_index(&mut self, index: usize) -> Result<()> {

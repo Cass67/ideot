@@ -1,11 +1,17 @@
 use crate::app::{App, FocusPane, GitDiffLayout, GitView};
 use crate::git::DiffKind;
 use crate::highlight::{Highlighter, SimpleTreeSitterHighlighter};
+use std::cell::RefCell;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
+
+thread_local! {
+    static HIGHLIGHTER: RefCell<SimpleTreeSitterHighlighter> = RefCell::new(SimpleTreeSitterHighlighter::default());
+}
 
 pub fn render(frame: &mut Frame, app: &App) {
     let root = Layout::default()
@@ -92,11 +98,15 @@ pub fn render(frame: &mut Frame, app: &App) {
     if app.search_open() {
         let area = centered_rect(70, 45, frame.area());
         frame.render_widget(Clear, area);
+        let visible_rows = area.height.saturating_sub(3) as usize;
+        let selected = app.selected_file();
+        let start = selected.saturating_sub(visible_rows.saturating_sub(1));
         let results: Vec<ListItem> = app
             .search(app.search_query())
             .into_iter()
             .enumerate()
-            .take(area.height.saturating_sub(3) as usize)
+            .skip(start)
+            .take(visible_rows)
             .map(|(index, file)| {
                 let prefix = if index == app.selected_file() {
                     "> "
@@ -490,36 +500,38 @@ pub fn highlighted_editor_lines_for_height(app: &App, height: usize) -> Vec<Line
             "Open a file with Ctrl-P or select from explorer",
         )];
     };
-    let mut highlighter = SimpleTreeSitterHighlighter::default();
     let selection = editor.selection();
     let scroll = app.editor_scroll();
-    editor
-        .buffer()
-        .lines()
-        .iter()
-        .enumerate()
-        .skip(app.editor_scroll())
-        .take(height)
-        .map(|(line_idx, line)| {
-            let visible_line = line_idx - scroll;
-            let mut rendered = highlighted_line_with_selection(
-                &mut highlighter,
-                app.language_hint(),
-                line,
-                line_idx,
-                visible_line,
-                selection,
-            );
-            let marker = app.diagnostic_marker_for_line(line_idx);
-            let prefix = if app.line_numbers_visible() {
-                format!("{marker}{:>5} │ ", line_idx + 1)
-            } else {
-                format!("{marker} ")
-            };
-            rendered.spans.insert(0, Span::raw(prefix));
-            rendered
-        })
-        .collect()
+    HIGHLIGHTER.with(|highlighter| {
+        let mut highlighter = highlighter.borrow_mut();
+        editor
+            .buffer()
+            .lines()
+            .iter()
+            .enumerate()
+            .skip(app.editor_scroll())
+            .take(height)
+            .map(|(line_idx, line)| {
+                let visible_line = line_idx - scroll;
+                let mut rendered = highlighted_line_with_selection(
+                    &mut *highlighter,
+                    app.language_hint(),
+                    line,
+                    line_idx,
+                    visible_line,
+                    selection,
+                );
+                let marker = app.diagnostic_marker_for_line(line_idx);
+                let prefix = if app.line_numbers_visible() {
+                    format!("{marker}{:>5} │ ", line_idx + 1)
+                } else {
+                    format!("{marker} ")
+                };
+                rendered.spans.insert(0, Span::raw(prefix));
+                rendered
+            })
+            .collect()
+    })
 }
 
 fn highlighted_line_with_selection(

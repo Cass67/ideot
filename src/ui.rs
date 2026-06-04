@@ -2,6 +2,8 @@ use crate::app::{App, FocusPane, GitDiffLayout, GitView};
 use crate::git::DiffKind;
 use crate::highlight::{Highlighter, SimpleTreeSitterHighlighter};
 use std::cell::RefCell;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -9,8 +11,20 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HighlightCacheKey {
+    relative: Option<String>,
+    text_hash: u64,
+    scroll: usize,
+    height: usize,
+    selection: Option<(usize, usize, usize, usize)>,
+    line_numbers_visible: bool,
+    diagnostic_hash: u64,
+}
+
 thread_local! {
     static HIGHLIGHTER: RefCell<SimpleTreeSitterHighlighter> = RefCell::new(SimpleTreeSitterHighlighter::default());
+    static HIGHLIGHT_CACHE: RefCell<Option<(HighlightCacheKey, Vec<Line<'static>>)>> = const { RefCell::new(None) };
 }
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -96,7 +110,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     if app.search_open() {
-        let area = centered_rect(70, 45, frame.area());
+        let area = search_popup_area(frame.area());
         frame.render_widget(Clear, area);
         let visible_rows = area.height.saturating_sub(3) as usize;
         let selected = app.selected_file();
@@ -108,18 +122,21 @@ pub fn render(frame: &mut Frame, app: &App) {
             .skip(start)
             .take(visible_rows)
             .map(|(index, file)| {
-                let prefix = if index == app.selected_file() {
-                    "> "
-                } else {
-                    "  "
-                };
-                ListItem::new(format!("{prefix}{}", file.relative))
+                search_result_item(
+                    app.search_query(),
+                    index == app.selected_file(),
+                    &file.relative,
+                )
             })
             .collect();
+        let total = app.search(app.search_query()).len();
         frame.render_widget(
             List::new(results).block(
                 Block::default()
-                    .title(format!("Find file: {} · Esc close", app.search_query()))
+                    .title(format!(
+                        "Find file: {} · {total} results · Esc close",
+                        app.search_query()
+                    ))
                     .borders(Borders::ALL),
             ),
             area,
@@ -155,6 +172,34 @@ pub fn render(frame: &mut Frame, app: &App) {
         footer[0],
     );
     frame.render_widget(Paragraph::new(app.status_line()), footer[1]);
+}
+
+fn search_result_item(query: &str, selected: bool, path: &str) -> ListItem<'static> {
+    let prefix = if selected { "> " } else { "  " };
+    let query = query.trim();
+    if query.is_empty() {
+        return ListItem::new(format!("{prefix}{path}"));
+    }
+    let haystack = path.to_ascii_lowercase();
+    let needle = query.to_ascii_lowercase();
+    let Some(start) = haystack.find(&needle) else {
+        return ListItem::new(format!("{prefix}{path}"));
+    };
+    let end = start + needle.len();
+    let mut spans = vec![Span::raw(prefix.to_string())];
+    if start > 0 {
+        spans.push(Span::raw(path[..start].to_string()));
+    }
+    spans.push(Span::styled(
+        path[start..end].to_string(),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    ));
+    if end < path.len() {
+        spans.push(Span::raw(path[end..].to_string()));
+    }
+    ListItem::new(Line::from(spans))
 }
 
 fn render_completion_popup(frame: &mut Frame, app: &App) {
@@ -207,6 +252,10 @@ fn render_hover_popup(frame: &mut Frame, app: &App) {
         ),
         area,
     );
+}
+
+pub fn search_popup_area(area: Rect) -> Rect {
+    centered_rect(70, 45, area)
 }
 
 pub fn hover_popup_area(area: Rect) -> Rect {
@@ -446,6 +495,9 @@ pub fn help_text_lines() -> Vec<&'static str> {
         "  Ctrl-Q       Quit",
         "",
         "Editing",
+        "  Home/End     Move to start/end of line",
+        "  Delete       Delete character after cursor",
+        "  Alt←/Alt→    Move by word",
         "  Shift+Arrows Select text",
         "  Ctrl-A       Select all text in current file",
         "  Y            Copy selection",
@@ -535,7 +587,16 @@ pub fn highlighted_editor_lines_for_height(app: &App, height: usize) -> Vec<Line
     };
     let selection = editor.selection();
     let scroll = app.editor_scroll();
-    HIGHLIGHTER.with(|highlighter| {
+    let key = highlight_cache_key(app, height);
+    if let Some(cached) = HIGHLIGHT_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .as_ref()
+            .and_then(|(cached_key, lines)| (cached_key == &key).then(|| lines.clone()))
+    }) {
+        return cached;
+    }
+    let lines: Vec<Line<'static>> = HIGHLIGHTER.with(|highlighter| {
         let mut highlighter = highlighter.borrow_mut();
         editor
             .buffer()
@@ -564,7 +625,45 @@ pub fn highlighted_editor_lines_for_height(app: &App, height: usize) -> Vec<Line
                 rendered
             })
             .collect()
-    })
+    });
+    HIGHLIGHT_CACHE.with(|cache| *cache.borrow_mut() = Some((key, lines.clone())));
+    lines
+}
+
+fn highlight_cache_key(app: &App, height: usize) -> HighlightCacheKey {
+    let mut text_hasher = DefaultHasher::new();
+    if let Some(editor) = app.editor() {
+        editor.buffer().text().hash(&mut text_hasher);
+    }
+    let mut diagnostic_hasher = DefaultHasher::new();
+    for diagnostic in app.current_file_diagnostics() {
+        diagnostic.range.start.line.hash(&mut diagnostic_hasher);
+        diagnostic
+            .range
+            .start
+            .character
+            .hash(&mut diagnostic_hasher);
+        diagnostic.message.hash(&mut diagnostic_hasher);
+    }
+    let selection = app.editor().and_then(|editor| {
+        editor.selection().map(|selection| {
+            (
+                selection.start.line,
+                selection.start.column,
+                selection.end.line,
+                selection.end.column,
+            )
+        })
+    });
+    HighlightCacheKey {
+        relative: app.current_relative().map(ToOwned::to_owned),
+        text_hash: text_hasher.finish(),
+        scroll: app.editor_scroll(),
+        height,
+        selection,
+        line_numbers_visible: app.line_numbers_visible(),
+        diagnostic_hash: diagnostic_hasher.finish(),
+    }
 }
 
 fn highlighted_line_with_selection(

@@ -12,6 +12,7 @@ use crate::marks::SessionMarks;
 use crate::search::{RecentFiles, SearchIndex};
 use crate::settings::Settings;
 use anyhow::{bail, Context, Result};
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -129,6 +130,7 @@ pub struct App {
     focus_pane: FocusPane,
     git: GitBrowserState,
     pending_lsp_change: Option<PendingLspChange>,
+    explorer_entries_cache: RefCell<Option<Vec<ExplorerEntry>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -179,6 +181,7 @@ impl App {
             focus_pane: FocusPane::Explorer,
             git: GitBrowserState::default(),
             pending_lsp_change: None,
+            explorer_entries_cache: RefCell::new(None),
         }
     }
 
@@ -186,6 +189,7 @@ impl App {
         let index = ProjectIndex::build(&self.root)?;
         self.search_index = SearchIndex::new(index.files().to_vec());
         self.index = Some(index);
+        self.invalidate_explorer_entries();
         Ok(())
     }
 
@@ -473,7 +477,14 @@ impl App {
         self.search_index.query(query, &self.recent)
     }
 
+    fn invalidate_explorer_entries(&self) {
+        *self.explorer_entries_cache.borrow_mut() = None;
+    }
+
     pub fn explorer_entries(&self) -> Vec<ExplorerEntry> {
+        if let Some(entries) = self.explorer_entries_cache.borrow().as_ref() {
+            return entries.clone();
+        }
         let Some(index) = &self.index else {
             return Vec::new();
         };
@@ -530,6 +541,7 @@ impl App {
             relative: Some(file),
             is_dir: false,
         }));
+        *self.explorer_entries_cache.borrow_mut() = Some(entries.clone());
         entries
     }
 
@@ -809,6 +821,14 @@ impl App {
         self.activate_explorer_index(self.selected_file)
     }
 
+    pub fn activate_search_visible_row(&mut self, row: usize, visible_rows: usize) -> Result<()> {
+        let start = self
+            .selected_file
+            .saturating_sub(visible_rows.saturating_sub(1));
+        self.selected_file = start + row;
+        self.open_selected()
+    }
+
     pub fn activate_explorer_visible_row(&mut self, row: usize) -> Result<()> {
         let index = self.explorer_scroll + row;
         self.selected_file = index.min(self.explorer_entries().len().saturating_sub(1));
@@ -829,6 +849,7 @@ impl App {
             .trim()
             .to_string();
         self.expanded_dirs.remove(&dir);
+        self.invalidate_explorer_entries();
     }
 
     fn activate_explorer_index(&mut self, index: usize) -> Result<()> {
@@ -846,6 +867,7 @@ impl App {
             if !self.expanded_dirs.insert(dir.clone()) {
                 self.expanded_dirs.remove(&dir);
             }
+            self.invalidate_explorer_entries();
         }
         Ok(())
     }
@@ -1403,6 +1425,37 @@ impl App {
     pub fn editor_move_right(&mut self) {
         if let Some(editor) = &mut self.editor {
             editor.move_right();
+        }
+    }
+
+    pub fn editor_move_line_start(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_line_start();
+        }
+    }
+
+    pub fn editor_move_line_end(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_line_end();
+        }
+    }
+
+    pub fn editor_move_word_left(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_word_left();
+        }
+    }
+
+    pub fn editor_move_word_right(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_word_right();
+        }
+    }
+
+    pub fn delete_forward(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.edit_delete();
+            self.after_current_editor_changed();
         }
     }
 

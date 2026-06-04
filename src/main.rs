@@ -121,6 +121,17 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 KeyCode::PageUp => app.page_hover_up(),
                 _ => {}
             },
+            Event::Mouse(mouse)
+                if app.search_open() && mouse.kind == MouseEventKind::Down(MouseButton::Left) =>
+            {
+                let size = terminal.size()?;
+                let area = ui::search_popup_area(Rect::new(0, 0, size.width, size.height));
+                if ui::rect_contains(area, mouse.column, mouse.row) {
+                    let row = mouse.row.saturating_sub(area.y + 1) as usize;
+                    let visible_rows = area.height.saturating_sub(3) as usize;
+                    let _ = app.activate_search_visible_row(row, visible_rows);
+                }
+            }
             Event::Mouse(mouse) if app.hover_panel_focused() => match mouse.kind {
                 MouseEventKind::ScrollDown => app.scroll_hover_down(),
                 MouseEventKind::ScrollUp => app.scroll_hover_up(),
@@ -250,6 +261,11 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     app.page_editor_up(vh);
                     app.scroll_to_cursor(vh);
                 }
+                (_, KeyCode::Home) => app.editor_move_line_start(),
+                (_, KeyCode::End) => app.editor_move_line_end(),
+                (_, KeyCode::Delete) => app.delete_forward(),
+                (KeyModifiers::ALT, KeyCode::Left) => app.editor_move_word_left(),
+                (KeyModifiers::ALT, KeyCode::Right) => app.editor_move_word_right(),
                 // Selection: Shift + arrows (must be before plain arrows)
                 (KeyModifiers::SHIFT, KeyCode::Left) => app.extend_selection_left(),
                 (KeyModifiers::SHIFT, KeyCode::Right) => app.extend_selection_right(),

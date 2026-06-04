@@ -36,6 +36,15 @@ impl Buffer {
             .unwrap_or(0)
     }
 
+    fn next_char_boundary(text: &str, index: usize) -> usize {
+        let index = Self::ceil_char_boundary(text, index);
+        text[index..]
+            .char_indices()
+            .nth(1)
+            .map(|(offset, _)| index + offset)
+            .unwrap_or(text.len())
+    }
+
     pub fn from_text(text: String) -> Self {
         let text = Self::normalize_line_endings(text);
         let lines = if text.is_empty() {
@@ -158,6 +167,24 @@ impl Buffer {
         let right = line.split_off(column);
         self.lines.insert(position.line + 1, right);
         self.dirty = true;
+    }
+
+    pub fn delete_char_after(&mut self, position: Position) {
+        if position.line >= self.lines.len() {
+            return;
+        }
+        let line_len = self.lines[position.line].len();
+        if position.column < line_len {
+            let line = &mut self.lines[position.line];
+            let column = Self::ceil_char_boundary(line, position.column);
+            let next = Self::next_char_boundary(line, column);
+            line.replace_range(column..next, "");
+            self.dirty = true;
+        } else if position.line + 1 < self.lines.len() {
+            let next = self.lines.remove(position.line + 1);
+            self.lines[position.line].push_str(&next);
+            self.dirty = true;
+        }
     }
 
     pub fn delete_char_before(&mut self, position: Position) {

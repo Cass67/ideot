@@ -1,5 +1,9 @@
 use crate::buffer::{Buffer, Position};
 
+fn is_word_char(ch: char) -> bool {
+    ch == '_' || ch.is_alphanumeric()
+}
+
 /// Text selection range
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection {
@@ -235,6 +239,19 @@ impl Editor {
         self.push_history("delete", before, after);
     }
 
+    pub fn edit_delete(&mut self) {
+        let before = self.snapshot();
+        if self.selection.is_some() {
+            self.delete_selection();
+            let after = self.snapshot();
+            self.push_history("delete", before, after);
+            return;
+        }
+        self.buffer.delete_char_after(self.cursor);
+        let after = self.snapshot();
+        self.push_history("delete", before, after);
+    }
+
     pub fn undo(&mut self) -> Option<String> {
         let entry = self.undo_stack.pop()?;
         self.restore_snapshot(&entry.before);
@@ -305,6 +322,62 @@ impl Editor {
             self.cursor.line += 1;
             self.clamp_column();
         }
+    }
+
+    pub fn move_line_start(&mut self) {
+        self.cursor.column = 0;
+    }
+
+    pub fn move_line_end(&mut self) {
+        self.cursor.column = self
+            .buffer
+            .line(self.cursor.line)
+            .map(str::len)
+            .unwrap_or(0);
+    }
+
+    pub fn move_word_right(&mut self) {
+        let line = self.buffer.line(self.cursor.line).unwrap_or("");
+        let mut column = self.cursor.column.min(line.len());
+        while column < line.len() {
+            let next = Self::next_char_boundary(line, column);
+            let ch = line[column..next].chars().next().unwrap_or(' ');
+            column = next;
+            if !is_word_char(ch) {
+                break;
+            }
+        }
+        while column < line.len() {
+            let next = Self::next_char_boundary(line, column);
+            let ch = line[column..next].chars().next().unwrap_or(' ');
+            if is_word_char(ch) {
+                break;
+            }
+            column = next;
+        }
+        self.cursor.column = column;
+    }
+
+    pub fn move_word_left(&mut self) {
+        let line = self.buffer.line(self.cursor.line).unwrap_or("");
+        let mut column = self.cursor.column.min(line.len());
+        while column > 0 {
+            let previous = Self::previous_char_boundary(line, column);
+            let ch = line[previous..column].chars().next().unwrap_or(' ');
+            if is_word_char(ch) {
+                break;
+            }
+            column = previous;
+        }
+        while column > 0 {
+            let previous = Self::previous_char_boundary(line, column);
+            let ch = line[previous..column].chars().next().unwrap_or(' ');
+            if !is_word_char(ch) {
+                break;
+            }
+            column = previous;
+        }
+        self.cursor.column = column;
     }
 
     pub fn insert_char(&mut self, ch: char) {

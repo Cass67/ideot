@@ -3,7 +3,7 @@ use crossterm::{
     cursor::SetCursorStyle,
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind,
+        Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -87,6 +87,8 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
             continue;
         }
         match event::read()? {
+            Event::Key(key)
+                if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat => {}
             Event::Key(key)
                 if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('q') =>
             {
@@ -184,6 +186,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (KeyModifiers::CONTROL, KeyCode::Char('d')) => app.start_delete_file_prompt(),
                 (KeyModifiers::CONTROL, KeyCode::Char('p')) => app.toggle_search(),
                 (KeyModifiers::CONTROL, KeyCode::Char('f')) => app.open_file_search(),
+                (KeyModifiers::CONTROL, KeyCode::Char('w')) => app.toggle_focus_pane(),
                 (_, KeyCode::F(8)) if key.modifiers == KeyModifiers::SHIFT => {
                     app.previous_diagnostic()
                 }
@@ -204,6 +207,9 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
                     let _ = app.toggle_lsp_hover_enabled();
                 }
+                (KeyModifiers::CONTROL, KeyCode::Char('u')) => {
+                    let _ = app.toggle_lsp_diagnostics_visible();
+                }
                 (_, KeyCode::F(1)) => app.toggle_help(),
                 (KeyModifiers::CONTROL, KeyCode::Char('m')) => {
                     let _ = app.mark_current_file();
@@ -220,6 +226,11 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 }
                 (_, KeyCode::Tab) if app.git_view() == Some(ideot::app::GitView::Diff) => {
                     app.toggle_git_diff_layout()
+                }
+                (_, KeyCode::Tab)
+                    if app.git_view().is_none() && app.focus_pane() == FocusPane::Editor =>
+                {
+                    app.insert_indent()
                 }
                 (_, KeyCode::Tab) if app.git_view().is_none() => app.toggle_focus_pane(),
                 (_, KeyCode::PageDown) if app.git_view() == Some(ideot::app::GitView::Diff) => {

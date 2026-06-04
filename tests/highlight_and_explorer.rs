@@ -223,7 +223,29 @@ fn editor_cursor_maps_to_screen_position_when_visible() {
     app.place_editor_cursor(1, 2);
 
     let area = Rect::new(30, 0, 70, 20);
-    assert_eq!(ui::editor_cursor_screen_position(&app, area), Some((42, 2)));
+    assert_eq!(ui::editor_cursor_screen_position(&app, area), Some((43, 2)));
+}
+
+#[test]
+fn editor_cursor_screen_position_at_end_of_single_char_when_gutter_hidden() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "c").unwrap();
+    let mut app = App::new_with_settings(
+        dir.path().to_path_buf(),
+        ideot::settings::Settings {
+            line_numbers_visible: false,
+            ..ideot::settings::Settings::default()
+        },
+    );
+    app.rebuild_index().unwrap();
+    app.open_relative("note.txt").unwrap();
+    app.editor_mut()
+        .unwrap()
+        .set_cursor(ideot::buffer::Position { line: 0, column: 1 });
+
+    let area = Rect::new(0, 0, 20, 5);
+
+    assert_eq!(ui::editor_cursor_screen_position(&app, area), Some((2, 1)));
 }
 
 #[test]

@@ -180,10 +180,6 @@ impl Buffer {
             let next = Self::next_char_boundary(line, column);
             line.replace_range(column..next, "");
             self.dirty = true;
-        } else if position.line + 1 < self.lines.len() {
-            let next = self.lines.remove(position.line + 1);
-            self.lines[position.line].push_str(&next);
-            self.dirty = true;
         }
     }
 

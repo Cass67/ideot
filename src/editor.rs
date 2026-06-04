@@ -398,11 +398,17 @@ impl Editor {
         } else {
             0
         };
+        let previous_column = if before.column > 0 {
+            self.buffer
+                .line(before.line)
+                .map(|line| Self::previous_char_boundary(line, before.column))
+                .unwrap_or(0)
+        } else {
+            0
+        };
         self.buffer.delete_char_before(before);
         if before.column > 0 {
-            if let Some(line) = self.buffer.line(before.line) {
-                self.cursor.column = Self::previous_char_boundary(line, before.column);
-            }
+            self.cursor.column = previous_column;
         } else if before.line > 0 {
             self.cursor.line -= 1;
             self.cursor.column = previous_line_len;

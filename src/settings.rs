@@ -8,6 +8,8 @@ pub struct Settings {
     pub lsp_enabled: bool,
     #[serde(default = "default_lsp_hover_enabled")]
     pub lsp_hover_enabled: bool,
+    #[serde(default = "default_lsp_diagnostics_visible")]
+    pub lsp_diagnostics_visible: bool,
     #[serde(default = "default_file_pane_visible")]
     pub file_pane_visible: bool,
     #[serde(default = "default_line_numbers_visible")]
@@ -19,6 +21,7 @@ impl Default for Settings {
         Self {
             lsp_enabled: default_lsp_enabled(),
             lsp_hover_enabled: default_lsp_hover_enabled(),
+            lsp_diagnostics_visible: default_lsp_diagnostics_visible(),
             file_pane_visible: default_file_pane_visible(),
             line_numbers_visible: default_line_numbers_visible(),
         }
@@ -70,6 +73,10 @@ fn default_lsp_enabled() -> bool {
 }
 
 fn default_lsp_hover_enabled() -> bool {
+    false
+}
+
+fn default_lsp_diagnostics_visible() -> bool {
     false
 }
 

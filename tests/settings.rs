@@ -10,6 +10,7 @@ fn lsp_enabled_defaults_to_true_when_settings_file_missing() {
 
     assert!(settings.lsp_enabled);
     assert!(!settings.lsp_hover_enabled);
+    assert!(!settings.lsp_diagnostics_visible);
     assert!(settings.file_pane_visible);
     assert!(settings.line_numbers_visible);
 }
@@ -21,6 +22,7 @@ fn lsp_enabled_round_trips_to_disk() {
     let settings = Settings {
         lsp_enabled: false,
         lsp_hover_enabled: true,
+        lsp_diagnostics_visible: true,
         file_pane_visible: false,
         line_numbers_visible: false,
     };
@@ -30,6 +32,7 @@ fn lsp_enabled_round_trips_to_disk() {
 
     assert!(!loaded.lsp_enabled);
     assert!(loaded.lsp_hover_enabled);
+    assert!(loaded.lsp_diagnostics_visible);
     assert!(!loaded.file_pane_visible);
     assert!(!loaded.line_numbers_visible);
 }

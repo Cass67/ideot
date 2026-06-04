@@ -45,10 +45,33 @@ fn status_line_reports_lsp_unavailable_when_no_server_is_running() {
 }
 
 #[test]
-fn status_line_summarizes_current_file_diagnostics_and_current_line() {
+fn diagnostics_display_defaults_off() {
     let dir = tempdir().unwrap();
     std::fs::write(dir.path().join("note.txt"), "fn main() {}\nlet x =").unwrap();
     let mut app = App::new(dir.path().to_path_buf());
+    app.rebuild_index().unwrap();
+    app.open_relative("note.txt").unwrap();
+    let uri = app.current_lsp_uri().unwrap();
+    app.diagnostics
+        .update(uri, vec![diagnostic(1, DiagnosticSeverity::Error, "noisy")]);
+
+    let rendered = ui::highlighted_editor_lines_for_height(&app, 2);
+
+    assert!(!app.status_line().contains("noisy"));
+    assert!(!format!("{:?}", rendered).contains("error"));
+}
+
+#[test]
+fn status_line_summarizes_current_file_diagnostics_and_current_line() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "fn main() {}\nlet x =").unwrap();
+    let mut app = App::new_with_settings(
+        dir.path().to_path_buf(),
+        Settings {
+            lsp_diagnostics_visible: true,
+            ..Settings::default()
+        },
+    );
     app.rebuild_index().unwrap();
     app.open_relative("note.txt").unwrap();
     let uri = app.current_lsp_uri().unwrap();
@@ -70,6 +93,26 @@ fn status_line_summarizes_current_file_diagnostics_and_current_line() {
 }
 
 #[test]
+fn line_numbers_off_does_not_reserve_gutter_for_normal_lines() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "fn main() {}").unwrap();
+    let mut app = App::new_with_settings(
+        dir.path().to_path_buf(),
+        Settings {
+            line_numbers_visible: false,
+            ..Settings::default()
+        },
+    );
+    app.rebuild_index().unwrap();
+    app.open_relative("note.txt").unwrap();
+
+    let rendered = ui::highlighted_editor_lines_for_height(&app, 1);
+
+    assert_eq!(app.editor_gutter_width(), 0);
+    assert!(!format!("{:?}", rendered[0]).contains("          "));
+}
+
+#[test]
 fn diagnostic_gutter_shows_severity_even_when_line_numbers_are_off() {
     let dir = tempdir().unwrap();
     std::fs::write(dir.path().join("note.txt"), "fn main() {}").unwrap();
@@ -77,6 +120,7 @@ fn diagnostic_gutter_shows_severity_even_when_line_numbers_are_off() {
         dir.path().to_path_buf(),
         Settings {
             line_numbers_visible: false,
+            lsp_diagnostics_visible: true,
             ..Settings::default()
         },
     );
@@ -97,7 +141,13 @@ fn diagnostic_gutter_shows_severity_even_when_line_numbers_are_off() {
 fn editor_lines_are_prefixed_with_diagnostic_markers() {
     let dir = tempdir().unwrap();
     std::fs::write(dir.path().join("note.txt"), "fn main() {}\nlet x =").unwrap();
-    let mut app = App::new(dir.path().to_path_buf());
+    let mut app = App::new_with_settings(
+        dir.path().to_path_buf(),
+        Settings {
+            lsp_diagnostics_visible: true,
+            ..Settings::default()
+        },
+    );
     app.rebuild_index().unwrap();
     app.open_relative("note.txt").unwrap();
     let uri = app.current_lsp_uri().unwrap();

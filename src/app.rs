@@ -379,6 +379,13 @@ impl App {
         }
     }
 
+    pub fn insert_indent(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.edit_insert_text("    ".to_string(), "indent");
+            self.after_current_editor_changed();
+        }
+    }
+
     pub fn insert_newline(&mut self) {
         if let Some(editor) = &mut self.editor {
             editor.edit_insert_text("\n".to_string(), "insert");
@@ -715,6 +722,18 @@ impl App {
             .unwrap_or(&[])
     }
 
+    pub fn displayed_file_diagnostics(&self) -> &[Diagnostic] {
+        if self.settings.lsp_diagnostics_visible {
+            self.current_file_diagnostics()
+        } else {
+            &[]
+        }
+    }
+
+    pub fn lsp_diagnostics_visible(&self) -> bool {
+        self.settings.lsp_diagnostics_visible
+    }
+
     pub fn diagnostics_panel_open(&self) -> bool {
         self.diagnostics_panel_open
     }
@@ -814,7 +833,7 @@ impl App {
 
     pub fn compact_diagnostic_gutter_for_line(&self, line: usize) -> String {
         let Some(severity) = self.diagnostic_severity_for_line(line) else {
-            return "          ".to_string();
+            return String::new();
         };
         format!(
             "{} {} │ ",
@@ -825,7 +844,7 @@ impl App {
 
     fn diagnostic_severity_for_line(&self, line: usize) -> Option<DiagnosticSeverity> {
         let mut severity = None;
-        for diagnostic in self.current_file_diagnostics() {
+        for diagnostic in self.displayed_file_diagnostics() {
             if diagnostic.range.start.line as usize != line {
                 continue;
             }
@@ -849,7 +868,7 @@ impl App {
     pub fn status_line(&self) -> String {
         let base = self.current_relative().unwrap_or("no file");
         let lsp = self.lsp_status.as_str();
-        let diagnostics = self.current_file_diagnostics();
+        let diagnostics = self.displayed_file_diagnostics();
         if diagnostics.is_empty() {
             return if self.status.is_empty() {
                 format!("{base} · {lsp}")
@@ -1401,6 +1420,10 @@ impl App {
     }
 
     pub fn toggle_focus_pane(&mut self) {
+        if !self.settings.file_pane_visible {
+            self.focus_pane = FocusPane::Editor;
+            return;
+        }
         self.focus_pane = match self.focus_pane {
             FocusPane::Explorer => FocusPane::Editor,
             FocusPane::Editor => FocusPane::Explorer,
@@ -1425,9 +1448,9 @@ impl App {
 
     pub fn editor_gutter_width(&self) -> u16 {
         if self.settings.line_numbers_visible {
-            9
-        } else {
             10
+        } else {
+            0
         }
     }
 
@@ -1451,6 +1474,17 @@ impl App {
             self.close_hover_panel();
             self.status = "LSP hover off".to_string();
         }
+        Ok(())
+    }
+
+    pub fn toggle_lsp_diagnostics_visible(&mut self) -> Result<()> {
+        self.settings.lsp_diagnostics_visible = !self.settings.lsp_diagnostics_visible;
+        self.settings.save()?;
+        self.status = if self.settings.lsp_diagnostics_visible {
+            "LSP diagnostics on".to_string()
+        } else {
+            "LSP diagnostics off".to_string()
+        };
         Ok(())
     }
 

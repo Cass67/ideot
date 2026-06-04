@@ -27,7 +27,7 @@ pub struct EditorViewport {
     pub scroll: usize,
 }
 
-const EDITOR_DIAGNOSTIC_GUTTER_WIDTH: u16 = 9;
+const EDITOR_DIAGNOSTIC_GUTTER_WIDTH: u16 = 10;
 
 impl EditorViewport {
     pub fn contains(&self, column: u16, row: u16) -> bool {

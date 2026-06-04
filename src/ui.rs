@@ -19,6 +19,7 @@ struct HighlightCacheKey {
     height: usize,
     selection: Option<(usize, usize, usize, usize)>,
     line_numbers_visible: bool,
+    diagnostics_visible: bool,
     diagnostic_hash: u64,
 }
 
@@ -553,7 +554,8 @@ pub fn help_text_lines() -> Vec<&'static str> {
     vec![
         "Keyboard",
         "  Help is modal; press F1 or Esc to return to the editor",
-        "  Tab          Toggle focus between explorer and editor",
+        "  Ctrl-W       Toggle focus between explorer and editor",
+        "  Tab          Editor: insert indent",
         "  Arrows       Navigate focused pane / move cursor in editor",
         "  Page Up/Down Scroll focused pane",
         "  Enter        New line (editor) / Open file (explorer/git)",
@@ -593,6 +595,7 @@ pub fn help_text_lines() -> Vec<&'static str> {
         "LSP",
         "  Ctrl-L       Toggle LSP on/off (remembered)",
         "  Ctrl-O       Toggle LSP hover on/off (remembered)",
+        "  Ctrl-U       Toggle LSP diagnostics on/off (remembered)",
         "  Ctrl-H       LSP hover",
         "  Ctrl-/       LSP completion",
         "  Ctrl-]       LSP go to definition",
@@ -705,7 +708,7 @@ fn highlight_cache_key(app: &App, height: usize) -> HighlightCacheKey {
         editor.buffer().text().hash(&mut text_hasher);
     }
     let mut diagnostic_hasher = DefaultHasher::new();
-    for diagnostic in app.current_file_diagnostics() {
+    for diagnostic in app.displayed_file_diagnostics() {
         diagnostic.range.start.line.hash(&mut diagnostic_hasher);
         diagnostic
             .range
@@ -731,6 +734,7 @@ fn highlight_cache_key(app: &App, height: usize) -> HighlightCacheKey {
         height,
         selection,
         line_numbers_visible: app.line_numbers_visible(),
+        diagnostics_visible: app.lsp_diagnostics_visible(),
         diagnostic_hash: diagnostic_hasher.finish(),
     }
 }

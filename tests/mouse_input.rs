@@ -45,8 +45,8 @@ fn rendered_editor_mapping_accounts_for_diagnostic_gutter() {
         scroll: 0,
     };
 
-    let before_close_brace = viewport.position_for_rendered_editor_cell(39, 1, &["};".to_string()]);
-    let after_semicolon = viewport.position_for_rendered_editor_cell(41, 1, &["};".to_string()]);
+    let before_close_brace = viewport.position_for_rendered_editor_cell(40, 1, &["};".to_string()]);
+    let after_semicolon = viewport.position_for_rendered_editor_cell(42, 1, &["};".to_string()]);
 
     assert_eq!(before_close_brace, Some(Position { line: 0, column: 0 }));
     assert_eq!(after_semicolon, Some(Position { line: 0, column: 2 }));
@@ -97,11 +97,11 @@ fn drag_sequence_emits_start_update_finish_actions() {
     let mut controller = MouseInputController::default();
 
     assert_eq!(
-        controller.left_down(41, 1, &viewport, &lines),
+        controller.left_down(42, 1, &viewport, &lines),
         Some(MouseAction::MoveCursor(Position { line: 0, column: 2 }))
     );
     assert_eq!(
-        controller.drag(44, 1, &viewport, &lines),
+        controller.drag(45, 1, &viewport, &lines),
         Some(MouseAction::UpdateSelection {
             anchor: Position { line: 0, column: 2 },
             end: Position { line: 0, column: 5 },

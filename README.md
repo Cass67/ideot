@@ -56,12 +56,14 @@ Binary path: `target/release/ideot`
 | `Ctrl-T` | Toggle line numbers on/off, remembered |
 | `Ctrl-L` | Toggle LSP on/off, remembered |
 | `Ctrl-O` | Toggle LSP hover on/off, remembered |
+| `Ctrl-U` | Toggle LSP diagnostics display on/off, remembered (default off) |
 | `Ctrl-H` | Request LSP hover panel |
 | `Ctrl-/` | Request LSP completions |
 | `Ctrl-]` | Request LSP go to definition |
 | `Ctrl-M` | Mark current file |
 | `Ctrl-1` .. `Ctrl-9` | Jump to mark 1-9 |
-| `Tab` | Toggle focus between explorer and editor |
+| `Ctrl-W` | Toggle focus between explorer and editor |
+| `Tab` | Insert indent in editor |
 | `Ctrl-Q` | Quit |
 | `F1` | Toggle help overlay |
 
@@ -82,7 +84,7 @@ Press `Ctrl-M` to mark the current file, then `Ctrl-1` through `Ctrl-9` to jump 
 
 ## LSP support
 
-ideot starts a language server when it opens a supported file and the server binary is available on `PATH`. LSP can be toggled with `Ctrl-L`; mouse/keyboard hover popups can be toggled separately with `Ctrl-O`.
+ideot starts a language server when it opens a supported file and the server binary is available on `PATH`. LSP can be toggled with `Ctrl-L`; mouse/keyboard hover popups can be toggled separately with `Ctrl-O`. Diagnostic display is quiet by default and can be toggled with `Ctrl-U`.
 
 | File types | Language server command | macOS install | Linux install |
 |---|---|---|---|

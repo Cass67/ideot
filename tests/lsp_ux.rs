@@ -1,5 +1,6 @@
 use ideot::app::App;
 use ideot::lsp::{Diagnostic, DiagnosticSeverity, Position, Range};
+use ideot::settings::Settings;
 use ideot::ui;
 use tempfile::tempdir;
 
@@ -64,8 +65,32 @@ fn status_line_summarizes_current_file_diagnostics_and_current_line() {
 
     assert_eq!(
         app.status_line(),
-        "note.txt · LSP unavailable: no server configured · 1 error, 1 warning · expected expression"
+        "note.txt · LSP unavailable: no server configured · 1 error, 1 warning · line 2: expected expression"
     );
+}
+
+#[test]
+fn diagnostic_gutter_shows_severity_even_when_line_numbers_are_off() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "fn main() {}").unwrap();
+    let mut app = App::new_with_settings(
+        dir.path().to_path_buf(),
+        Settings {
+            line_numbers_visible: false,
+            ..Settings::default()
+        },
+    );
+    app.rebuild_index().unwrap();
+    app.open_relative("note.txt").unwrap();
+    let uri = app.current_lsp_uri().unwrap();
+    app.diagnostics.update(
+        uri,
+        vec![diagnostic(0, DiagnosticSeverity::Error, "expected item")],
+    );
+
+    let rendered = ui::highlighted_editor_lines_for_height(&app, 1);
+
+    assert!(format!("{:?}", rendered[0]).contains("✗ error │ "));
 }
 
 #[test]

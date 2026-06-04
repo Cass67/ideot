@@ -147,8 +147,16 @@ pub fn render(frame: &mut Frame, app: &App) {
         render_file_prompt(frame, app);
     }
 
+    if app.file_search_open() {
+        render_file_search_popup(frame, app);
+    }
+
     if app.completion_popup.is_some() {
         render_completion_popup(frame, app);
+    }
+
+    if app.diagnostics_panel_open() {
+        render_diagnostics_panel(frame, app);
     }
 
     if app.git_view().is_some() {
@@ -202,6 +210,56 @@ fn search_result_item(query: &str, selected: bool, path: &str) -> ListItem<'stat
     ListItem::new(Line::from(spans))
 }
 
+fn render_file_search_popup(frame: &mut Frame, app: &App) {
+    let area = centered_rect(65, 20, frame.area());
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(format!("Find in file: {}", app.file_search_query())).block(
+            Block::default()
+                .title("file search · Enter next · Esc close")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Blue)),
+        ),
+        area,
+    );
+}
+
+fn render_diagnostics_panel(frame: &mut Frame, app: &App) {
+    let area = centered_rect(75, 55, frame.area());
+    frame.render_widget(Clear, area);
+    let rows: Vec<ListItem> = app
+        .current_file_diagnostics()
+        .iter()
+        .enumerate()
+        .take(area.height.saturating_sub(2) as usize)
+        .map(|(index, diagnostic)| {
+            let prefix = if index == app.selected_diagnostic() {
+                "> "
+            } else {
+                "  "
+            };
+            let severity = diagnostic
+                .severity
+                .map(|severity| format!("{severity:?}"))
+                .unwrap_or_else(|| "Info".to_string());
+            ListItem::new(format!(
+                "{prefix}line {} · {severity} · {}",
+                diagnostic.range.start.line + 1,
+                diagnostic.message
+            ))
+        })
+        .collect();
+    frame.render_widget(
+        List::new(rows).block(
+            Block::default()
+                .title("diagnostics · Enter jump · Esc close")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Blue)),
+        ),
+        area,
+    );
+}
+
 fn render_completion_popup(frame: &mut Frame, app: &App) {
     let Some(items) = &app.completion_popup else {
         return;
@@ -210,13 +268,19 @@ fn render_completion_popup(frame: &mut Frame, app: &App) {
     frame.render_widget(Clear, area);
     let rows: Vec<ListItem> = items
         .iter()
+        .enumerate()
         .take(area.height.saturating_sub(2) as usize)
-        .map(|item| {
+        .map(|(index, item)| {
+            let prefix = if index == app.completion_selected() {
+                "> "
+            } else {
+                "  "
+            };
             let detail = item.detail.as_deref().unwrap_or("");
             if detail.is_empty() {
-                ListItem::new(item.label.clone())
+                ListItem::new(format!("{prefix}{}", item.label))
             } else {
-                ListItem::new(format!("{} — {detail}", item.label))
+                ListItem::new(format!("{prefix}{} — {detail}", item.label))
             }
         })
         .collect();
@@ -503,6 +567,7 @@ pub fn help_text_lines() -> Vec<&'static str> {
         "  Y            Copy selection",
         "  Ctrl+Shift+C Copy selection",
         "  Ctrl+V       Paste",
+        "  Ctrl-F       Search in current file",
         "  U            Undo",
         "  Ctrl-R       Redo",
         "  Esc          Clear selection / close overlay",
@@ -528,6 +593,8 @@ pub fn help_text_lines() -> Vec<&'static str> {
         "  Ctrl-H       LSP hover",
         "  Ctrl-/       LSP completion",
         "  Ctrl-]       LSP go to definition",
+        "  F8/Shift-F8 Next/previous diagnostic",
+        "  Ctrl-E       Toggle diagnostics panel",
         "",
         "Mouse",
         "  Click tree row     Open file or toggle folder",
@@ -615,11 +682,10 @@ pub fn highlighted_editor_lines_for_height(app: &App, height: usize) -> Vec<Line
                     visible_line,
                     selection,
                 );
-                let marker = app.diagnostic_marker_for_line(line_idx);
                 let prefix = if app.line_numbers_visible() {
                     app.diagnostic_gutter_for_line(line_idx)
                 } else {
-                    format!("{marker} ")
+                    app.compact_diagnostic_gutter_for_line(line_idx)
                 };
                 rendered.spans.insert(0, Span::raw(prefix));
                 rendered

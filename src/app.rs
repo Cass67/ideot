@@ -17,6 +17,15 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+fn diagnostic_severity_label(severity: DiagnosticSeverity) -> &'static str {
+    match severity {
+        DiagnosticSeverity::Error => "error",
+        DiagnosticSeverity::Warning => "warning",
+        DiagnosticSeverity::Information => "info",
+        DiagnosticSeverity::Hint => "hint",
+    }
+}
+
 fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
     uri.strip_prefix("file://").map(PathBuf::from)
 }
@@ -109,6 +118,7 @@ pub struct App {
     hover_focus_requested: bool,
     hover_focused: bool,
     pub completion_popup: Option<Vec<CompletionItem>>,
+    completion_selected: usize,
     lsp_status: String,
     settings: Settings,
     index: Option<ProjectIndex>,
@@ -121,6 +131,8 @@ pub struct App {
     selected_file: usize,
     search_query: String,
     search_open: bool,
+    file_search_open: bool,
+    file_search_query: String,
     expanded_dirs: BTreeSet<String>,
     explorer_scroll: usize,
     editor_scroll: usize,
@@ -131,6 +143,8 @@ pub struct App {
     git: GitBrowserState,
     pending_lsp_change: Option<PendingLspChange>,
     explorer_entries_cache: RefCell<Option<Vec<ExplorerEntry>>>,
+    diagnostics_panel_open: bool,
+    selected_diagnostic: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +170,7 @@ impl App {
             hover_focus_requested: false,
             hover_focused: false,
             completion_popup: None,
+            completion_selected: 0,
             lsp_status: if settings.lsp_enabled {
                 "LSP unavailable: no file".to_string()
             } else {
@@ -172,6 +187,8 @@ impl App {
             selected_file: 0,
             search_query: String::new(),
             search_open: false,
+            file_search_open: false,
+            file_search_query: String::new(),
             expanded_dirs: BTreeSet::new(),
             explorer_scroll: 0,
             editor_scroll: 0,
@@ -182,6 +199,8 @@ impl App {
             git: GitBrowserState::default(),
             pending_lsp_change: None,
             explorer_entries_cache: RefCell::new(None),
+            diagnostics_panel_open: false,
+            selected_diagnostic: 0,
         }
     }
 
@@ -284,6 +303,42 @@ impl App {
                 },
             );
         }
+    }
+
+    pub fn completion_selected(&self) -> usize {
+        self.completion_selected
+    }
+
+    pub fn completion_down(&mut self) {
+        let max = self
+            .completion_popup
+            .as_ref()
+            .map(Vec::len)
+            .unwrap_or(0)
+            .saturating_sub(1);
+        self.completion_selected = (self.completion_selected + 1).min(max);
+    }
+
+    pub fn completion_up(&mut self) {
+        self.completion_selected = self.completion_selected.saturating_sub(1);
+    }
+
+    pub fn close_completion(&mut self) {
+        self.completion_popup = None;
+        self.completion_selected = 0;
+    }
+
+    pub fn accept_completion(&mut self) {
+        let Some(item) = self
+            .completion_popup
+            .as_ref()
+            .and_then(|items| items.get(self.completion_selected))
+            .cloned()
+        else {
+            return;
+        };
+        self.insert_pasted_text(item.label);
+        self.close_completion();
     }
 
     pub fn lsp_definition(&self, path: &std::path::Path, pos: Position) {
@@ -459,6 +514,7 @@ impl App {
             }
             LspMsg::Completion(c) => {
                 self.completion_popup = c;
+                self.completion_selected = 0;
                 self.status = if self
                     .completion_popup
                     .as_ref()
@@ -654,6 +710,80 @@ impl App {
             .unwrap_or(&[])
     }
 
+    pub fn diagnostics_panel_open(&self) -> bool {
+        self.diagnostics_panel_open
+    }
+
+    pub fn selected_diagnostic(&self) -> usize {
+        self.selected_diagnostic
+    }
+
+    pub fn toggle_diagnostics_panel(&mut self) {
+        self.diagnostics_panel_open = !self.diagnostics_panel_open;
+        self.selected_diagnostic = 0;
+    }
+
+    pub fn next_diagnostic(&mut self) {
+        self.jump_diagnostic(true);
+    }
+
+    pub fn previous_diagnostic(&mut self) {
+        self.jump_diagnostic(false);
+    }
+
+    pub fn diagnostics_panel_down(&mut self) {
+        self.selected_diagnostic = (self.selected_diagnostic + 1)
+            .min(self.current_file_diagnostics().len().saturating_sub(1));
+    }
+
+    pub fn diagnostics_panel_up(&mut self) {
+        self.selected_diagnostic = self.selected_diagnostic.saturating_sub(1);
+    }
+
+    pub fn activate_selected_diagnostic(&mut self) {
+        let Some(diagnostic) = self
+            .current_file_diagnostics()
+            .get(self.selected_diagnostic)
+            .cloned()
+        else {
+            return;
+        };
+        let line = diagnostic.range.start.line as usize;
+        let column = diagnostic.range.start.character as usize;
+        self.move_editor_cursor_to(Position { line, column });
+        self.status = format!("line {}: {}", line + 1, diagnostic.message);
+    }
+
+    fn jump_diagnostic(&mut self, forward: bool) {
+        let cursor_line = self
+            .editor
+            .as_ref()
+            .map(|editor| editor.cursor().line)
+            .unwrap_or(0);
+        let mut diagnostics = self.current_file_diagnostics().to_vec();
+        diagnostics.sort_by_key(|diagnostic| diagnostic.range.start.line);
+        let diagnostic = if forward {
+            diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.range.start.line as usize > cursor_line)
+                .cloned()
+                .or_else(|| diagnostics.first().cloned())
+        } else {
+            diagnostics
+                .iter()
+                .rev()
+                .find(|diagnostic| (diagnostic.range.start.line as usize) < cursor_line)
+                .cloned()
+                .or_else(|| diagnostics.last().cloned())
+        };
+        if let Some(diagnostic) = diagnostic {
+            let line = diagnostic.range.start.line as usize;
+            let column = diagnostic.range.start.character as usize;
+            self.move_editor_cursor_to(Position { line, column });
+            self.status = format!("line {}: {}", line + 1, diagnostic.message);
+        }
+    }
+
     pub fn diagnostic_marker_for_line(&self, line: usize) -> &'static str {
         match self.diagnostic_severity_for_line(line) {
             Some(DiagnosticSeverity::Error) => "✗",
@@ -667,16 +797,22 @@ impl App {
         let Some(severity) = self.diagnostic_severity_for_line(line) else {
             return format!("  {:>5} │ ", line + 1);
         };
-        let label = match severity {
-            DiagnosticSeverity::Error => "error",
-            DiagnosticSeverity::Warning => "warning",
-            DiagnosticSeverity::Information => "info",
-            DiagnosticSeverity::Hint => "hint",
-        };
+        let label = diagnostic_severity_label(severity);
         format!(
             "{}{:>5} {label} │ ",
             self.diagnostic_marker_for_line(line),
             line + 1
+        )
+    }
+
+    pub fn compact_diagnostic_gutter_for_line(&self, line: usize) -> String {
+        let Some(severity) = self.diagnostic_severity_for_line(line) else {
+            return "          ".to_string();
+        };
+        format!(
+            "{} {} │ ",
+            self.diagnostic_marker_for_line(line),
+            diagnostic_severity_label(severity)
         )
     }
 
@@ -749,7 +885,7 @@ impl App {
             diagnostics
                 .iter()
                 .find(|diagnostic| diagnostic.range.start.line == line)
-                .map(|diagnostic| diagnostic.message.as_str())
+                .map(|diagnostic| format!("line {}: {}", line + 1, diagnostic.message))
         });
         let mut status = if let Some(message) = current_message {
             format!("{base} · {lsp} · {} · {message}", parts.join(", "))
@@ -914,6 +1050,103 @@ impl App {
 
     pub fn search_open(&self) -> bool {
         self.search_open
+    }
+
+    pub fn file_search_open(&self) -> bool {
+        self.file_search_open
+    }
+
+    pub fn file_search_query(&self) -> &str {
+        &self.file_search_query
+    }
+
+    pub fn open_file_search(&mut self) {
+        self.file_search_open = true;
+        self.file_search_query.clear();
+    }
+
+    pub fn close_file_search(&mut self) {
+        self.file_search_open = false;
+        self.file_search_query.clear();
+    }
+
+    pub fn push_file_search_char(&mut self, ch: char) {
+        self.file_search_query.push(ch);
+    }
+
+    pub fn pop_file_search_char(&mut self) {
+        self.file_search_query.pop();
+    }
+
+    pub fn next_file_search_match(&mut self) {
+        let Some((line, column)) = self.find_file_search_match(true) else {
+            return;
+        };
+        self.move_editor_cursor_to(Position { line, column });
+        self.status = format!("match: line {}", line + 1);
+    }
+
+    pub fn previous_file_search_match(&mut self) {
+        let Some((line, column)) = self.find_file_search_match(false) else {
+            return;
+        };
+        self.move_editor_cursor_to(Position { line, column });
+        self.status = format!("match: line {}", line + 1);
+    }
+
+    fn find_file_search_match(&self, forward: bool) -> Option<(usize, usize)> {
+        let query = self.file_search_query.as_str();
+        if query.is_empty() {
+            return None;
+        }
+        let editor = self.editor.as_ref()?;
+        let cursor = editor.cursor();
+        let mut matches = Vec::new();
+        for (line_idx, line) in editor.buffer().lines().iter().enumerate() {
+            let mut start = 0;
+            while let Some(offset) = line[start..].find(query) {
+                matches.push((line_idx, start + offset));
+                start += offset + query.len();
+            }
+        }
+        if forward {
+            matches
+                .into_iter()
+                .find(|(line, col)| {
+                    *line > cursor.line || (*line == cursor.line && *col > cursor.column)
+                })
+                .or_else(|| self.first_file_search_match())
+        } else {
+            matches
+                .into_iter()
+                .rev()
+                .find(|(line, col)| {
+                    *line < cursor.line || (*line == cursor.line && *col < cursor.column)
+                })
+                .or_else(|| self.last_file_search_match())
+        }
+    }
+
+    fn first_file_search_match(&self) -> Option<(usize, usize)> {
+        let query = self.file_search_query.as_str();
+        let editor = self.editor.as_ref()?;
+        for (line_idx, line) in editor.buffer().lines().iter().enumerate() {
+            if let Some(column) = line.find(query) {
+                return Some((line_idx, column));
+            }
+        }
+        None
+    }
+
+    fn last_file_search_match(&self) -> Option<(usize, usize)> {
+        let query = self.file_search_query.as_str();
+        let editor = self.editor.as_ref()?;
+        for (line_idx, line) in editor.buffer().lines().iter().enumerate().rev() {
+            if let Some(column) = line.rfind(query) {
+                return Some((line_idx, column));
+            }
+        }
+        None
     }
 
     pub fn help_open(&self) -> bool {
@@ -1174,7 +1407,7 @@ impl App {
         if self.settings.line_numbers_visible {
             9
         } else {
-            2
+            10
         }
     }
 

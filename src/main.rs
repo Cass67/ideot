@@ -113,6 +113,27 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     HelpModalAction::Ignore => {}
                 },
             },
+            Event::Key(key) if app.file_search_open() => match key.code {
+                KeyCode::Esc => app.close_file_search(),
+                KeyCode::Enter => app.next_file_search_match(),
+                KeyCode::Backspace => app.pop_file_search_char(),
+                KeyCode::Char(ch) => app.push_file_search_char(ch),
+                _ => {}
+            },
+            Event::Key(key) if app.diagnostics_panel_open() => match key.code {
+                KeyCode::Esc => app.toggle_diagnostics_panel(),
+                KeyCode::Down => app.diagnostics_panel_down(),
+                KeyCode::Up => app.diagnostics_panel_up(),
+                KeyCode::Enter => app.activate_selected_diagnostic(),
+                _ => {}
+            },
+            Event::Key(key) if app.completion_popup.is_some() => match key.code {
+                KeyCode::Esc => app.close_completion(),
+                KeyCode::Down => app.completion_down(),
+                KeyCode::Up => app.completion_up(),
+                KeyCode::Enter => app.accept_completion(),
+                _ => {}
+            },
             Event::Key(key) if app.hover_panel_focused() => match key.code {
                 KeyCode::Esc => app.close_hover_panel(),
                 KeyCode::Down => app.scroll_hover_down(),
@@ -162,6 +183,12 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 (KeyModifiers::CONTROL, KeyCode::Char('n')) => app.start_new_file_prompt(),
                 (KeyModifiers::CONTROL, KeyCode::Char('d')) => app.start_delete_file_prompt(),
                 (KeyModifiers::CONTROL, KeyCode::Char('p')) => app.toggle_search(),
+                (KeyModifiers::CONTROL, KeyCode::Char('f')) => app.open_file_search(),
+                (_, KeyCode::F(8)) if key.modifiers == KeyModifiers::SHIFT => {
+                    app.previous_diagnostic()
+                }
+                (_, KeyCode::F(8)) => app.next_diagnostic(),
+                (KeyModifiers::CONTROL, KeyCode::Char('e')) => app.toggle_diagnostics_panel(),
                 (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
                     let _ = app.open_git_browser();
                 }

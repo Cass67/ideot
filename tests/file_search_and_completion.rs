@@ -3,22 +3,52 @@ use ideot::lsp::{CompletionItem, CompletionKind, LspMsg};
 use tempfile::tempdir;
 
 #[test]
-fn current_file_search_moves_to_matching_text() {
+fn current_file_search_is_case_insensitive() {
     let dir = tempdir().unwrap();
-    std::fs::write(dir.path().join("main.rs"), "alpha\nbeta\ngamma beta").unwrap();
+    std::fs::write(dir.path().join("main.rs"), "use std::path::PathBuf;").unwrap();
     let mut app = App::new(dir.path().to_path_buf());
     app.rebuild_index().unwrap();
     app.open_relative("main.rs").unwrap();
 
     app.open_file_search();
-    app.push_file_search_char('b');
-    app.push_file_search_char('e');
-    app.push_file_search_char('t');
-    app.push_file_search_char('a');
+    for ch in "Pathbuf".chars() {
+        app.push_file_search_char(ch);
+    }
     app.next_file_search_match();
 
-    assert_eq!(app.editor().unwrap().cursor().line, 1);
+    assert_eq!(app.editor().unwrap().cursor().column, 15);
+}
+
+#[test]
+fn current_file_search_moves_to_matching_text_and_reveals_it() {
+    let dir = tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("main.rs"),
+        (0..80)
+            .map(|line| {
+                if line == 70 {
+                    "needle".to_string()
+                } else {
+                    format!("line {line}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    let mut app = App::new(dir.path().to_path_buf());
+    app.rebuild_index().unwrap();
+    app.open_relative("main.rs").unwrap();
+
+    app.open_file_search();
+    for ch in "needle".chars() {
+        app.push_file_search_char(ch);
+    }
+    app.next_file_search_match();
+
+    assert_eq!(app.editor().unwrap().cursor().line, 70);
     assert_eq!(app.editor().unwrap().cursor().column, 0);
+    assert_eq!(app.editor_scroll(), 70);
 }
 
 #[test]

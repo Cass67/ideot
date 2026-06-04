@@ -160,6 +160,11 @@ impl App {
     }
 
     pub fn new_with_settings(root: PathBuf, settings: Settings) -> Self {
+        let focus_pane = if settings.file_pane_visible {
+            FocusPane::Explorer
+        } else {
+            FocusPane::Editor
+        };
         Self {
             root,
             should_quit: false,
@@ -195,7 +200,7 @@ impl App {
             help_open: false,
             help_scroll: 0,
             file_prompt: FilePromptState::default(),
-            focus_pane: FocusPane::Explorer,
+            focus_pane,
             git: GitBrowserState::default(),
             pending_lsp_change: None,
             explorer_entries_cache: RefCell::new(None),
@@ -751,6 +756,7 @@ impl App {
         let line = diagnostic.range.start.line as usize;
         let column = diagnostic.range.start.character as usize;
         self.move_editor_cursor_to(Position { line, column });
+        self.reveal_editor_cursor();
         self.status = format!("line {}: {}", line + 1, diagnostic.message);
     }
 
@@ -780,6 +786,7 @@ impl App {
             let line = diagnostic.range.start.line as usize;
             let column = diagnostic.range.start.character as usize;
             self.move_editor_cursor_to(Position { line, column });
+            self.reveal_editor_cursor();
             self.status = format!("line {}: {}", line + 1, diagnostic.message);
         }
     }
@@ -1025,6 +1032,12 @@ impl App {
         }
     }
 
+    fn reveal_editor_cursor(&mut self) {
+        if let Some(editor) = &self.editor {
+            self.editor_scroll = editor.cursor().line;
+        }
+    }
+
     pub fn update_editor_selection(&mut self, anchor: Position, end: Position) {
         self.focus_pane = FocusPane::Editor;
         if let Some(editor) = &mut self.editor {
@@ -1080,35 +1093,56 @@ impl App {
 
     pub fn next_file_search_match(&mut self) {
         let Some((line, column)) = self.find_file_search_match(true) else {
+            self.status = "no file search match".to_string();
             return;
         };
         self.move_editor_cursor_to(Position { line, column });
+        self.reveal_editor_cursor();
         self.status = format!("match: line {}", line + 1);
     }
 
     pub fn previous_file_search_match(&mut self) {
         let Some((line, column)) = self.find_file_search_match(false) else {
+            self.status = "no file search match".to_string();
             return;
         };
         self.move_editor_cursor_to(Position { line, column });
+        self.reveal_editor_cursor();
         self.status = format!("match: line {}", line + 1);
     }
 
-    fn find_file_search_match(&self, forward: bool) -> Option<(usize, usize)> {
+    pub fn file_search_match_count(&self) -> usize {
+        self.file_search_matches().len()
+    }
+
+    fn file_search_matches(&self) -> Vec<(usize, usize)> {
         let query = self.file_search_query.as_str();
         if query.is_empty() {
+            return Vec::new();
+        }
+        let Some(editor) = self.editor.as_ref() else {
+            return Vec::new();
+        };
+        let query_lower = query.to_ascii_lowercase();
+        let mut matches = Vec::new();
+        for (line_idx, line) in editor.buffer().lines().iter().enumerate() {
+            let line_lower = line.to_ascii_lowercase();
+            let mut start = 0;
+            while let Some(offset) = line_lower[start..].find(&query_lower) {
+                matches.push((line_idx, start + offset));
+                start += offset + query_lower.len();
+            }
+        }
+        matches
+    }
+
+    fn find_file_search_match(&self, forward: bool) -> Option<(usize, usize)> {
+        if self.file_search_query.is_empty() {
             return None;
         }
         let editor = self.editor.as_ref()?;
         let cursor = editor.cursor();
-        let mut matches = Vec::new();
-        for (line_idx, line) in editor.buffer().lines().iter().enumerate() {
-            let mut start = 0;
-            while let Some(offset) = line[start..].find(query) {
-                matches.push((line_idx, start + offset));
-                start += offset + query.len();
-            }
-        }
+        let matches = self.file_search_matches();
         if forward {
             matches
                 .into_iter()
@@ -1128,25 +1162,11 @@ impl App {
     }
 
     fn first_file_search_match(&self) -> Option<(usize, usize)> {
-        let query = self.file_search_query.as_str();
-        let editor = self.editor.as_ref()?;
-        for (line_idx, line) in editor.buffer().lines().iter().enumerate() {
-            if let Some(column) = line.find(query) {
-                return Some((line_idx, column));
-            }
-        }
-        None
+        self.file_search_matches().into_iter().next()
     }
 
     fn last_file_search_match(&self) -> Option<(usize, usize)> {
-        let query = self.file_search_query.as_str();
-        let editor = self.editor.as_ref()?;
-        for (line_idx, line) in editor.buffer().lines().iter().enumerate().rev() {
-            if let Some(column) = line.rfind(query) {
-                return Some((line_idx, column));
-            }
-        }
-        None
+        self.file_search_matches().into_iter().next_back()
     }
 
     pub fn help_open(&self) -> bool {

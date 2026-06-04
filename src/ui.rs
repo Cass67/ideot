@@ -213,10 +213,13 @@ fn search_result_item(query: &str, selected: bool, path: &str) -> ListItem<'stat
 fn render_file_search_popup(frame: &mut Frame, app: &App) {
     let area = centered_rect(65, 20, frame.area());
     frame.render_widget(Clear, area);
+    let count = app.file_search_match_count();
     frame.render_widget(
         Paragraph::new(format!("Find in file: {}", app.file_search_query())).block(
             Block::default()
-                .title("file search · Enter next · Esc close")
+                .title(format!(
+                    "file search · {count} matches · Enter next · Esc close"
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Blue)),
         ),

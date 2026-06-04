@@ -85,6 +85,6 @@ fn editor_lines_are_prefixed_with_diagnostic_markers() {
     );
 
     let rendered = ui::highlighted_editor_lines_for_height(&app, 2);
-    assert!(format!("{:?}", rendered[0]).contains("!    1 │ "));
-    assert!(format!("{:?}", rendered[1]).contains("✗    2 │ "));
+    assert!(format!("{:?}", rendered[0]).contains("!    1 warning │ "));
+    assert!(format!("{:?}", rendered[1]).contains("✗    2 error │ "));
 }

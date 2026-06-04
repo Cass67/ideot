@@ -130,6 +130,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         render_file_prompt(frame, app);
     }
 
+    if app.completion_popup.is_some() {
+        render_completion_popup(frame, app);
+    }
+
     if app.git_view().is_some() {
         render_git_overlay(frame, app);
     }
@@ -151,6 +155,35 @@ pub fn render(frame: &mut Frame, app: &App) {
         footer[0],
     );
     frame.render_widget(Paragraph::new(app.status_line()), footer[1]);
+}
+
+fn render_completion_popup(frame: &mut Frame, app: &App) {
+    let Some(items) = &app.completion_popup else {
+        return;
+    };
+    let area = centered_rect(50, 35, frame.area());
+    frame.render_widget(Clear, area);
+    let rows: Vec<ListItem> = items
+        .iter()
+        .take(area.height.saturating_sub(2) as usize)
+        .map(|item| {
+            let detail = item.detail.as_deref().unwrap_or("");
+            if detail.is_empty() {
+                ListItem::new(item.label.clone())
+            } else {
+                ListItem::new(format!("{} — {detail}", item.label))
+            }
+        })
+        .collect();
+    frame.render_widget(
+        List::new(rows).block(
+            Block::default()
+                .title("completion")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Blue)),
+        ),
+        area,
+    );
 }
 
 fn render_hover_popup(frame: &mut Frame, app: &App) {
@@ -523,7 +556,7 @@ pub fn highlighted_editor_lines_for_height(app: &App, height: usize) -> Vec<Line
                 );
                 let marker = app.diagnostic_marker_for_line(line_idx);
                 let prefix = if app.line_numbers_visible() {
-                    format!("{marker}{:>5} │ ", line_idx + 1)
+                    app.diagnostic_gutter_for_line(line_idx)
                 } else {
                     format!("{marker} ")
                 };

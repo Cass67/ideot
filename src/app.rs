@@ -6,7 +6,7 @@ use crate::fs::{ProjectFile, ProjectIndex};
 use crate::git::{self, DiffRow, GitCommit};
 use crate::lsp::{
     configured_server_command, CompletionItem, Diagnostic, DiagnosticSeverity, DiagnosticsStore,
-    HoverInfo, LspClient, LspMsg,
+    HoverInfo, Location, LspClient, LspMsg,
 };
 use crate::marks::SessionMarks;
 use crate::search::{RecentFiles, SearchIndex};
@@ -15,6 +15,10 @@ use anyhow::{bail, Context, Result};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
+    uri.strip_prefix("file://").map(PathBuf::from)
+}
 
 fn lsp_language_id(extension: &str) -> &str {
     match extension.trim_start_matches('.') {
@@ -449,8 +453,19 @@ impl App {
                     self.status = "no hover info".to_string();
                 }
             }
-            LspMsg::Completion(c) => self.completion_popup = c,
-            LspMsg::Definition(_) => {}
+            LspMsg::Completion(c) => {
+                self.completion_popup = c;
+                self.status = if self
+                    .completion_popup
+                    .as_ref()
+                    .is_some_and(|items| !items.is_empty())
+                {
+                    "completion".to_string()
+                } else {
+                    "no completions".to_string()
+                };
+            }
+            LspMsg::Definition(locations) => self.apply_definition_locations(locations),
         }
     }
 
@@ -579,6 +594,43 @@ impl App {
         self.hover_scroll = self.hover_scroll.saturating_sub(10);
     }
 
+    fn apply_definition_locations(&mut self, locations: Option<Vec<Location>>) {
+        let Some(location) = locations.and_then(|mut locations| locations.drain(..).next()) else {
+            self.status = "definition not found".to_string();
+            return;
+        };
+        let Some(path) = file_uri_to_path(&location.uri) else {
+            self.status = "definition URI unsupported".to_string();
+            return;
+        };
+        let relative = path
+            .strip_prefix(&self.root)
+            .ok()
+            .map(|path| path.to_path_buf());
+        let opened = if let Some(relative) = relative {
+            self.open_relative(&relative.to_string_lossy()).is_ok()
+        } else if let Ok(buffer) = Buffer::load(&path) {
+            self.editor = Some(Editor::new(buffer));
+            self.current_relative = Some(path.to_string_lossy().to_string());
+            true
+        } else {
+            false
+        };
+        if opened {
+            self.move_editor_cursor_to(Position {
+                line: location.range.start.line as usize,
+                column: location.range.start.character as usize,
+            });
+            self.status = format!(
+                "definition: {}:{}",
+                path.display(),
+                location.range.start.line + 1
+            );
+        } else {
+            self.status = "definition file unavailable".to_string();
+        }
+    }
+
     pub fn current_lsp_uri(&self) -> Option<String> {
         let path = self.editor.as_ref()?.buffer().path()?;
         Some(self.lsp_uri(path))
@@ -591,27 +643,52 @@ impl App {
     }
 
     pub fn diagnostic_marker_for_line(&self, line: usize) -> &'static str {
-        let mut has_warning = false;
-        let mut has_info = false;
+        match self.diagnostic_severity_for_line(line) {
+            Some(DiagnosticSeverity::Error) => "✗",
+            Some(DiagnosticSeverity::Warning) => "!",
+            Some(DiagnosticSeverity::Information | DiagnosticSeverity::Hint) => "·",
+            None => " ",
+        }
+    }
+
+    pub fn diagnostic_gutter_for_line(&self, line: usize) -> String {
+        let Some(severity) = self.diagnostic_severity_for_line(line) else {
+            return format!("  {:>5} │ ", line + 1);
+        };
+        let label = match severity {
+            DiagnosticSeverity::Error => "error",
+            DiagnosticSeverity::Warning => "warning",
+            DiagnosticSeverity::Information => "info",
+            DiagnosticSeverity::Hint => "hint",
+        };
+        format!(
+            "{}{:>5} {label} │ ",
+            self.diagnostic_marker_for_line(line),
+            line + 1
+        )
+    }
+
+    fn diagnostic_severity_for_line(&self, line: usize) -> Option<DiagnosticSeverity> {
+        let mut severity = None;
         for diagnostic in self.current_file_diagnostics() {
-            if diagnostic.range.start.line as usize == line {
-                match diagnostic
-                    .severity
-                    .unwrap_or(DiagnosticSeverity::Information)
+            if diagnostic.range.start.line as usize != line {
+                continue;
+            }
+            match diagnostic
+                .severity
+                .unwrap_or(DiagnosticSeverity::Information)
+            {
+                DiagnosticSeverity::Error => return Some(DiagnosticSeverity::Error),
+                DiagnosticSeverity::Warning => severity = Some(DiagnosticSeverity::Warning),
+                DiagnosticSeverity::Information | DiagnosticSeverity::Hint
+                    if severity.is_none() =>
                 {
-                    DiagnosticSeverity::Error => return "✗",
-                    DiagnosticSeverity::Warning => has_warning = true,
-                    DiagnosticSeverity::Information | DiagnosticSeverity::Hint => has_info = true,
+                    severity = diagnostic.severity
                 }
+                _ => {}
             }
         }
-        if has_warning {
-            "!"
-        } else if has_info {
-            "·"
-        } else {
-            " "
-        }
+        severity
     }
 
     pub fn status_line(&self) -> String {

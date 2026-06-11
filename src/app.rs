@@ -145,6 +145,7 @@ pub struct App {
     explorer_entries_cache: RefCell<Option<Vec<ExplorerEntry>>>,
     diagnostics_panel_open: bool,
     selected_diagnostic: usize,
+    lsp_server_command: Option<&'static str>,
 }
 
 #[derive(Debug, Clone)]
@@ -206,6 +207,7 @@ impl App {
             explorer_entries_cache: RefCell::new(None),
             diagnostics_panel_open: false,
             selected_diagnostic: 0,
+            lsp_server_command: None,
         }
     }
 
@@ -227,21 +229,31 @@ impl App {
         self.search_open = false;
         self.search_query.clear();
         self.editor_scroll = 0;
+        self.selected_diagnostic = 0;
 
-        // Spawn LSP client if enabled and not already initialized
+        // Spawn LSP client if enabled; restart if file type requires a different server
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if !self.settings.lsp_enabled {
             self.lsp_status = "LSP off".to_string();
-        } else if self.lsp.is_none() {
-            if let Some(lsp) = LspClient::init(ext, &self.root) {
-                let command = configured_server_command(ext).unwrap_or("language server");
-                self.lsp = Some(lsp);
-                self.lsp_status = format!("LSP active: {command}");
-            } else if let Some(command) = configured_server_command(ext) {
-                self.lsp_status =
-                    format!("LSP unavailable: {command} not found or failed to start");
-            } else {
-                self.lsp_status = "LSP unavailable: no server configured".to_string();
+        } else {
+            let needed = configured_server_command(ext);
+            if self.lsp.is_some() && self.lsp_server_command != needed {
+                self.lsp = None;
+                self.lsp_server_command = None;
+                self.diagnostics = DiagnosticsStore::new();
+            }
+            if self.lsp.is_none() {
+                if let Some(lsp) = LspClient::init(ext, &self.root) {
+                    let command = needed.unwrap_or("language server");
+                    self.lsp = Some(lsp);
+                    self.lsp_server_command = needed;
+                    self.lsp_status = format!("LSP active: {command}");
+                } else if let Some(command) = needed {
+                    self.lsp_status =
+                        format!("LSP unavailable: {command} not found or failed to start");
+                } else {
+                    self.lsp_status = "LSP unavailable: no server configured".to_string();
+                }
             }
         }
         if self.settings.lsp_enabled {
@@ -1594,6 +1606,10 @@ impl App {
         self.editor = None;
         self.current_relative = None;
         self.rebuild_index()?;
+        self.selected_file = self
+            .selected_file
+            .min(self.explorer_entries().len().saturating_sub(1));
+        self.focus_pane = FocusPane::Explorer;
         self.cancel_file_prompt();
         self.status = format!("deleted {relative}");
         Ok(())

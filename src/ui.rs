@@ -645,7 +645,7 @@ pub fn editor_cursor_screen_position(app: &App, editor_area: Rect) -> Option<(u1
     }
     let gutter_width = app.editor_gutter_width() as usize;
     let text_width = inner_width.saturating_sub(gutter_width);
-    let column = cursor.column.min(text_width.saturating_sub(1));
+    let column = cursor.column.min(text_width);
     Some((
         inner_x + gutter_width as u16 + column as u16,
         inner_y + visible_line as u16,
@@ -773,10 +773,6 @@ fn highlighted_line_with_selection(
         }
     });
 
-    let mut rendered = Vec::new();
-    let mut cursor = 0;
-
-    // Collect all spans (syntax + selection) and sort by position
     struct SpanInfo {
         start: usize,
         end: usize,
@@ -792,61 +788,79 @@ fn highlighted_line_with_selection(
             style: s.style,
         })
         .collect();
-
-    // Add selection span
-    if let Some((sel_start, sel_end)) = sel_start {
-        if sel_start < sel_end {
-            all_spans.push(SpanInfo {
-                start: sel_start,
-                end: sel_end.min(line.len()),
-                style: Style::default().bg(Color::Blue).fg(Color::White),
-            });
-        }
-    }
-
-    // Sort by start position
     all_spans.sort_by_key(|s| s.start);
 
-    // Render with selection override
-    if let Some((sel_start, sel_end)) = sel_start {
-        let sel_start = sel_start.min(line.len());
-        let sel_end = sel_end.min(line.len());
+    let sel_style = Style::default().bg(Color::Blue).fg(Color::White);
+    let mut rendered = Vec::new();
+    let mut pos = 0usize;
 
-        // Part before selection
-        if sel_start > 0 {
-            rendered.push(Span::raw(line[0..sel_start].to_string()));
+    for span in &all_spans {
+        if span.start > pos {
+            push_sel_split(
+                &mut rendered,
+                &line[pos..span.start],
+                pos,
+                Style::default(),
+                sel_start,
+                sel_style,
+            );
         }
-
-        // Selection part
-        if sel_start < sel_end {
-            rendered.push(Span::styled(
-                line[sel_start..sel_end].to_string(),
-                Style::default().bg(Color::Blue).fg(Color::White),
-            ));
-        }
-
-        // Part after selection
-        if sel_end < line.len() {
-            rendered.push(Span::raw(line[sel_end..].to_string()));
-        }
-    } else {
-        // No selection, just syntax highlighting
-        for span in &all_spans {
-            if span.start > cursor {
-                rendered.push(Span::raw(line[cursor..span.start].to_string()));
-            }
-            rendered.push(Span::styled(
-                line[span.start..span.end].to_string(),
-                span.style,
-            ));
-            cursor = span.end;
-        }
-        if cursor < line.len() {
-            rendered.push(Span::raw(line[cursor..].to_string()));
-        }
+        push_sel_split(
+            &mut rendered,
+            &line[span.start..span.end],
+            span.start,
+            span.style,
+            sel_start,
+            sel_style,
+        );
+        pos = span.end;
+    }
+    if pos < line.len() {
+        push_sel_split(
+            &mut rendered,
+            &line[pos..],
+            pos,
+            Style::default(),
+            sel_start,
+            sel_style,
+        );
     }
 
     Line::from(rendered)
+}
+
+fn push_sel_split(
+    out: &mut Vec<Span<'static>>,
+    text: &str,
+    offset: usize,
+    base: Style,
+    sel: Option<(usize, usize)>,
+    sel_style: Style,
+) {
+    if text.is_empty() {
+        return;
+    }
+    let end = offset + text.len();
+    let Some((ss, se)) = sel else {
+        out.push(Span::styled(text.to_string(), base));
+        return;
+    };
+    let pre_end = ss.min(end);
+    if offset < pre_end {
+        out.push(Span::styled(text[..pre_end - offset].to_string(), base));
+    }
+    let in_start = ss.max(offset);
+    let in_end = se.min(end);
+    if in_start < in_end {
+        out.push(Span::styled(
+            text[in_start - offset..in_end - offset].to_string(),
+            sel_style,
+        ));
+    }
+    let post_start = se.max(offset);
+    if post_start < end {
+        out.push(Span::styled(text[post_start - offset..].to_string(), base));
+    }
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {

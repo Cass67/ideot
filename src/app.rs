@@ -832,26 +832,31 @@ impl App {
     }
 
     pub fn diagnostic_gutter_for_line(&self, line: usize) -> String {
-        let Some(severity) = self.diagnostic_severity_for_line(line) else {
+        // Uniform width (17 when diagvis on, 10 off) so every line's text starts
+        // in the same column and matches editor_gutter_width().
+        if !self.lsp_diagnostics_visible() {
             return format!("  {:>5} │ ", line + 1);
-        };
-        let label = diagnostic_severity_label(severity);
-        format!(
-            "{}{:>5} {label} │ ",
-            self.diagnostic_marker_for_line(line),
-            line + 1
-        )
+        }
+        let marker = self.diagnostic_marker_for_line(line);
+        let label = self
+            .diagnostic_severity_for_line(line)
+            .map(diagnostic_severity_label)
+            .unwrap_or("");
+        format!("{}{:>5} {:<7} │ ", marker, line + 1, label)
     }
 
     pub fn compact_diagnostic_gutter_for_line(&self, line: usize) -> String {
-        let Some(severity) = self.diagnostic_severity_for_line(line) else {
+        // Uniform width (12 when diagvis on, 0 off) so text stays column-aligned
+        // even on lines without a diagnostic. Matches editor_gutter_width().
+        if !self.lsp_diagnostics_visible() {
             return String::new();
-        };
-        format!(
-            "{} {} │ ",
-            self.diagnostic_marker_for_line(line),
-            diagnostic_severity_label(severity)
-        )
+        }
+        let marker = self.diagnostic_marker_for_line(line);
+        let label = self
+            .diagnostic_severity_for_line(line)
+            .map(diagnostic_severity_label)
+            .unwrap_or("");
+        format!("{} {:<7} │ ", marker, label)
     }
 
     fn diagnostic_severity_for_line(&self, line: usize) -> Option<DiagnosticSeverity> {
@@ -1459,10 +1464,17 @@ impl App {
     }
 
     pub fn editor_gutter_width(&self) -> u16 {
-        if self.settings.line_numbers_visible {
-            10
-        } else {
-            0
+        // ponytail: width must equal the fixed width emitted by the gutter
+        // renderers below, otherwise mouse→cursor and cursor→screen math drifts
+        // and typed text lands off-column. Keep these in sync.
+        match (
+            self.settings.line_numbers_visible,
+            self.lsp_diagnostics_visible(),
+        ) {
+            (true, true) => 17,
+            (true, false) => 10,
+            (false, true) => 12,
+            (false, false) => 0,
         }
     }
 

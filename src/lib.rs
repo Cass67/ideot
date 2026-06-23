@@ -10,4 +10,5 @@ pub mod marks;
 pub mod runtime;
 pub mod search;
 pub mod settings;
+pub mod theme;
 pub mod ui;

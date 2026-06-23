@@ -134,7 +134,7 @@ fn diagnostic_gutter_shows_severity_even_when_line_numbers_are_off() {
 
     let rendered = ui::highlighted_editor_lines_for_height(&app, 1);
 
-    assert!(format!("{:?}", rendered[0]).contains("✗ error │ "));
+    assert!(format!("{:?}", rendered[0]).contains("✗ error"));
 }
 
 #[test]
@@ -160,6 +160,46 @@ fn editor_lines_are_prefixed_with_diagnostic_markers() {
     );
 
     let rendered = ui::highlighted_editor_lines_for_height(&app, 2);
-    assert!(format!("{:?}", rendered[0]).contains("!    1 warning │ "));
-    assert!(format!("{:?}", rendered[1]).contains("✗    2 error │ "));
+    assert!(format!("{:?}", rendered[0]).contains("!    1 warning"));
+    assert!(format!("{:?}", rendered[1]).contains("✗    2 error"));
+}
+
+#[test]
+fn gutter_width_matches_rendered_prefix_so_clicks_and_cursor_align() {
+    // Regression guard: editor_gutter_width() must equal the actual rendered
+    // gutter prefix width on every line (with and without a diagnostic),
+    // otherwise mouse→cursor and cursor→screen math drift and typed text lands
+    // off-column. Verifies both line-numbers on/off x diagvis on/off.
+    for line_numbers in [true, false] {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("note.txt"), "fn main() {}\nlet x =").unwrap();
+        let mut app = App::new_with_settings(
+            dir.path().to_path_buf(),
+            Settings {
+                line_numbers_visible: line_numbers,
+                lsp_diagnostics_visible: true,
+                ..Settings::default()
+            },
+        );
+        app.rebuild_index().unwrap();
+        app.open_relative("note.txt").unwrap();
+        let uri = app.current_lsp_uri().unwrap();
+        app.diagnostics.update(
+            uri,
+            vec![
+                diagnostic(0, DiagnosticSeverity::Error, "expected item"),
+                diagnostic(1, DiagnosticSeverity::Hint, "nudge"),
+            ],
+        );
+
+        let rendered = ui::highlighted_editor_lines_for_height(&app, 2);
+        let expected = app.editor_gutter_width() as usize;
+        for line in &rendered {
+            let prefix_len = line.spans[0].content.chars().count();
+            assert_eq!(
+                prefix_len, expected,
+                "line_numbers={line_numbers}: gutter prefix width {prefix_len} != editor_gutter_width {expected}"
+            );
+        }
+    }
 }

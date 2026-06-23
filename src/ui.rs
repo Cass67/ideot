@@ -1,6 +1,7 @@
 use crate::app::{App, FocusPane, GitDiffLayout, GitView};
 use crate::git::DiffKind;
 use crate::highlight::{Highlighter, SimpleTreeSitterHighlighter};
+use crate::theme;
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -8,7 +9,7 @@ use std::hash::{Hash, Hasher};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Clear, List, ListItem, Paragraph, Wrap},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,12 +51,11 @@ pub fn render(frame: &mut Frame, app: &App) {
                 .skip(app.explorer_scroll())
                 .take(200)
                 .map(|(index, file)| {
-                    let prefix = if index == app.selected_file() {
-                        "> "
-                    } else {
-                        "  "
-                    };
-                    ListItem::new(format!("{prefix}{}", file.relative))
+                    ListItem::new(format!(
+                        "{}{}",
+                        theme::selection_prefix(index == app.selected_file()),
+                        file.relative
+                    ))
                 })
                 .collect()
         } else {
@@ -65,45 +65,30 @@ pub fn render(frame: &mut Frame, app: &App) {
                 .skip(app.explorer_scroll())
                 .take(200)
                 .map(|(index, entry)| {
-                    let prefix = if index == app.selected_file() {
-                        "> "
-                    } else {
-                        "  "
-                    };
-                    ListItem::new(format!("{prefix}{}", entry.label))
+                    ListItem::new(format!(
+                        "{}{}",
+                        theme::selection_prefix(index == app.selected_file()),
+                        entry.label
+                    ))
                 })
                 .collect()
         };
-        let file_border = if app.focus_pane() == FocusPane::Explorer {
-            Color::Blue
-        } else {
-            Color::White
-        };
         frame.render_widget(
-            List::new(files).block(
-                Block::default()
-                    .title("files")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(file_border)),
-            ),
+            List::new(files).block(theme::pane_block(
+                "files",
+                app.focus_pane() == FocusPane::Explorer,
+            )),
             panes[0],
         );
     }
 
     let editor_lines =
         highlighted_editor_lines_for_height(app, panes[1].height.saturating_sub(2) as usize);
-    let editor_border = if app.focus_pane() == FocusPane::Editor {
-        Color::Blue
-    } else {
-        Color::White
-    };
     frame.render_widget(
-        Paragraph::new(editor_lines).block(
-            Block::default()
-                .title("editor")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(editor_border)),
-        ),
+        Paragraph::new(editor_lines).block(theme::pane_block(
+            "editor",
+            app.focus_pane() == FocusPane::Editor,
+        )),
         panes[1],
     );
     if let Some((x, y)) = editor_cursor_screen_position(app, panes[1]) {
@@ -132,14 +117,10 @@ pub fn render(frame: &mut Frame, app: &App) {
             .collect();
         let total = app.search(app.search_query()).len();
         frame.render_widget(
-            List::new(results).block(
-                Block::default()
-                    .title(format!(
-                        "Find file: {} · {total} results · Esc close",
-                        app.search_query()
-                    ))
-                    .borders(Borders::ALL),
-            ),
+            List::new(results).block(theme::overlay_block(&format!(
+                "Find file: {} · {total} results · Esc close",
+                app.search_query()
+            ))),
             area,
         );
     }
@@ -177,14 +158,15 @@ pub fn render(frame: &mut Frame, app: &App) {
         .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(root[1]);
     frame.render_widget(
-        Paragraph::new(footer_shortcuts(app.git_view().is_some())),
+        Paragraph::new(footer_shortcuts(app.git_view().is_some()))
+            .style(Style::default().fg(Color::DarkGray)),
         footer[0],
     );
     frame.render_widget(Paragraph::new(app.status_line()), footer[1]);
 }
 
 fn search_result_item(query: &str, selected: bool, path: &str) -> ListItem<'static> {
-    let prefix = if selected { "> " } else { "  " };
+    let prefix = theme::selection_prefix(selected);
     let query = query.trim();
     if query.is_empty() {
         return ListItem::new(format!("{prefix}{path}"));
@@ -217,12 +199,9 @@ fn render_file_search_popup(frame: &mut Frame, app: &App) {
     let count = app.file_search_match_count();
     frame.render_widget(
         Paragraph::new(format!("Find in file: {}", app.file_search_query())).block(
-            Block::default()
-                .title(format!(
-                    "file search · {count} matches · Enter next · Esc close"
-                ))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Blue)),
+            theme::overlay_block(&format!(
+                "file search · {count} matches · Enter next · Esc close"
+            )),
         ),
         area,
     );
@@ -237,11 +216,7 @@ fn render_diagnostics_panel(frame: &mut Frame, app: &App) {
         .enumerate()
         .take(area.height.saturating_sub(2) as usize)
         .map(|(index, diagnostic)| {
-            let prefix = if index == app.selected_diagnostic() {
-                "> "
-            } else {
-                "  "
-            };
+            let prefix = theme::selection_prefix(index == app.selected_diagnostic());
             let severity = diagnostic
                 .severity
                 .map(|severity| format!("{severity:?}"))
@@ -254,12 +229,7 @@ fn render_diagnostics_panel(frame: &mut Frame, app: &App) {
         })
         .collect();
     frame.render_widget(
-        List::new(rows).block(
-            Block::default()
-                .title("diagnostics · Enter jump · Esc close")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Blue)),
-        ),
+        List::new(rows).block(theme::overlay_block("diagnostics · Enter jump · Esc close")),
         area,
     );
 }
@@ -275,11 +245,7 @@ fn render_completion_popup(frame: &mut Frame, app: &App) {
         .enumerate()
         .take(area.height.saturating_sub(2) as usize)
         .map(|(index, item)| {
-            let prefix = if index == app.completion_selected() {
-                "> "
-            } else {
-                "  "
-            };
+            let prefix = theme::selection_prefix(index == app.completion_selected());
             let detail = item.detail.as_deref().unwrap_or("");
             if detail.is_empty() {
                 ListItem::new(format!("{prefix}{}", item.label))
@@ -289,12 +255,7 @@ fn render_completion_popup(frame: &mut Frame, app: &App) {
         })
         .collect();
     frame.render_widget(
-        List::new(rows).block(
-            Block::default()
-                .title("completion")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Blue)),
-        ),
+        List::new(rows).block(theme::overlay_block("completion")),
         area,
     );
 }
@@ -312,12 +273,9 @@ fn render_hover_popup(frame: &mut Frame, app: &App) {
         .collect::<Vec<_>>()
         .join("\n");
     frame.render_widget(
-        Paragraph::new(text).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .title("hover · wheel/↑↓ scroll · Esc close")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Blue)),
-        ),
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .block(theme::overlay_block("hover · wheel/↑↓ scroll · Esc close")),
         area,
     );
 }
@@ -359,12 +317,7 @@ fn render_file_prompt(frame: &mut Frame, app: &App) {
         None => String::new(),
     };
     frame.render_widget(
-        Paragraph::new(text).block(
-            Block::default()
-                .title("file action")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Blue)),
-        ),
+        Paragraph::new(text).block(theme::overlay_block("file action")),
         area,
     );
 }
@@ -379,21 +332,16 @@ fn render_git_overlay(frame: &mut Frame, app: &App) {
                 .iter()
                 .enumerate()
                 .map(|(index, commit)| {
-                    let prefix = if index == app.git_selected_index() {
-                        "> "
-                    } else {
-                        "  "
-                    };
-                    ListItem::new(format!("{prefix}{} {}", commit.hash, commit.summary))
+                    ListItem::new(format!(
+                        "{}{} {}",
+                        theme::selection_prefix(index == app.git_selected_index()),
+                        commit.hash,
+                        commit.summary
+                    ))
                 })
                 .collect();
             frame.render_widget(
-                List::new(rows).block(
-                    Block::default()
-                        .title("git commits")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Blue)),
-                ),
+                List::new(rows).block(theme::overlay_block("git commits")),
                 area,
             );
         }
@@ -403,21 +351,14 @@ fn render_git_overlay(frame: &mut Frame, app: &App) {
                 .iter()
                 .enumerate()
                 .map(|(index, file)| {
-                    let prefix = if index == app.git_selected_index() {
-                        "> "
-                    } else {
-                        "  "
-                    };
-                    ListItem::new(format!("{prefix}{file}"))
+                    ListItem::new(format!(
+                        "{}{file}",
+                        theme::selection_prefix(index == app.git_selected_index())
+                    ))
                 })
                 .collect();
             frame.render_widget(
-                List::new(rows).block(
-                    Block::default()
-                        .title("changed files")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Blue)),
-                ),
+                List::new(rows).block(theme::overlay_block("changed files")),
                 area,
             );
         }
@@ -472,23 +413,12 @@ fn render_split_git_diff(frame: &mut Frame, app: &App, area: Rect) {
             )
         })
         .collect();
-    let border = Style::default().fg(Color::Blue);
     frame.render_widget(
-        Paragraph::new(before).block(
-            Block::default()
-                .title("before")
-                .borders(Borders::ALL)
-                .border_style(border),
-        ),
+        Paragraph::new(before).block(theme::overlay_block("before")),
         panes[0],
     );
     frame.render_widget(
-        Paragraph::new(after).block(
-            Block::default()
-                .title("after")
-                .borders(Borders::ALL)
-                .border_style(border),
-        ),
+        Paragraph::new(after).block(theme::overlay_block("after")),
         panes[1],
     );
 }
@@ -523,12 +453,7 @@ fn render_unified_git_diff(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(rows).block(
-            Block::default()
-                .title("unified diff")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Blue)),
-        ),
+        Paragraph::new(rows).block(theme::overlay_block("unified diff")),
         area,
     );
 }
@@ -541,7 +466,7 @@ fn diff_line(text: &str, kind: DiffKind, before: bool, selected: bool) -> Line<'
         _ => Style::default().fg(Color::DarkGray),
     };
     if selected {
-        style = style.bg(Color::Blue);
+        style = style.bg(Color::Cyan);
     }
     Line::from(Span::styled(text.to_string(), style))
 }
@@ -624,11 +549,7 @@ fn render_help_overlay(frame: &mut Frame, app: &App) {
         .collect();
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(help).block(
-            Block::default()
-                .title("help · F1/Esc close · ↑↓ scroll")
-                .borders(Borders::ALL),
-        ),
+        Paragraph::new(help).block(theme::overlay_block("help · F1/Esc close · ↑↓ scroll")),
         area,
     );
 }
